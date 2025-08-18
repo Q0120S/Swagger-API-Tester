@@ -59,3 +59,10 @@ venv.bak/
 # Burp Suite specific
 *.burp
 *.bapp
+
+# develop test files
+test_parser.py
+test_parsing.py
+test_swagger.json
+yaml_lite.py
+yaml_lite$py.class

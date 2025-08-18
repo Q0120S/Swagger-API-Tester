@@ -21,8 +21,8 @@ from javax.swing.table import DefaultTableModel, AbstractTableModel
 from javax.swing.border import TitledBorder
 from javax.swing.text import SimpleAttributeSet, StyleConstants, StyledDocument, DefaultStyledDocument
 from javax.swing.text.html import HTMLEditorKit
-from java.awt import BorderLayout, GridBagLayout, GridBagConstraints, Insets, Font, Color, Dimension
-from java.awt.event import ActionListener, MouseAdapter
+from java.awt import BorderLayout, GridBagLayout, GridBagConstraints, Insets, Font, Color, Dimension, FlowLayout
+from java.awt.event import ActionListener, MouseAdapter, KeyEvent, KeyAdapter
 from java.net import URL, HttpURLConnection
 from java.io import BufferedReader, InputStreamReader, ByteArrayOutputStream, File as JavaFile
 import java.lang.Thread as JavaThread
@@ -54,6 +54,13 @@ class SyntaxHighlighter:
         self.current_theme = "burp"
         self._initializeThemes()
         self._applyTheme()
+        
+        # Initialize authentication profiles
+        self.auth_profiles = []
+        self.auth_headers = {}
+        
+        # Initialize custom headers
+        self.custom_headers = []
     
     def _initializeThemes(self):
         """Initialize color themes"""
@@ -536,6 +543,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         
         fetchButton = JButton("Fetch from URL", actionPerformed=self._fetchFromURL)
         fileButton = JButton("Load from File", actionPerformed=self._loadFromFile)
+        testButton = JButton("Test Parser", actionPerformed=self._testParser)
         
         # Example URL patterns
         exampleLabel = JLabel("Example formats:")
@@ -559,7 +567,8 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                     .addComponent(self._urlField))
                 .addGroup(layout.createSequentialGroup()
                     .addComponent(fetchButton)
-                    .addComponent(fileButton))
+                    .addComponent(fileButton)
+                    .addComponent(testButton))
                 .addComponent(exampleLabel)
                 .addComponent(exampleText)
                 .addComponent(self._progressBar)
@@ -572,7 +581,8 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                     .addComponent(self._urlField))
                 .addGroup(layout.createParallelGroup(GroupLayout.Alignment.BASELINE)
                     .addComponent(fetchButton)
-                    .addComponent(fileButton))
+                    .addComponent(fileButton)
+                    .addComponent(testButton))
                 .addComponent(exampleLabel)
                 .addComponent(exampleText)
                 .addComponent(self._progressBar)
@@ -583,7 +593,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         centerPanel.setBorder(BorderFactory.createTitledBorder("Parsed Endpoints"))
         
         # Endpoints table
-        self._endpointsTableModel = DefaultTableModel(["Method", "Path", "Description"], 0)
+        self._endpointsTableModel = DefaultTableModel(["Method", "Path", "Tags", "Description"], 0)
         self._endpointsTable = JTable(self._endpointsTableModel)
         scrollPane = JScrollPane(self._endpointsTable)
         centerPanel.add(scrollPane, BorderLayout.CENTER)
@@ -633,72 +643,401 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         
         return panel
         
-    def _createTesterTab(self):
-        """Create the API testing tab"""
-        panel = JPanel(BorderLayout())
+    # Duplicate method removed - using the complete one below
         
-        # Left panel - Endpoint selector
+    def _createSettingsTab(self):
+        """Create the settings tab"""
+        panel = JPanel()
+        layout = GroupLayout(panel)
+        panel.setLayout(layout)
+        layout.setAutoCreateGaps(True)
+        layout.setAutoCreateContainerGaps(True)
+        
+        # Authentication section
+        authBorder = BorderFactory.createTitledBorder("Authentication Management")
+        authPanel = JPanel(BorderLayout())
+        authPanel.setBorder(authBorder)
+        
+        # Add new authentication section
+        addAuthPanel = JPanel()
+        addAuthLayout = GroupLayout(addAuthPanel)
+        addAuthPanel.setLayout(addAuthLayout)
+        addAuthLayout.setAutoCreateGaps(True)
+        addAuthLayout.setAutoCreateContainerGaps(True)
+        
+        # Auth type
+        authTypeLabel = JLabel("Auth Type:")
+        self._authTypeCombo = JComboBox(["None", "Bearer Token", "API Key", "Basic Auth", "Custom Header"])
+        self._authTypeCombo.addActionListener(lambda e: self._updateAuthFields())
+        
+        # Auth fields
+        self._authKeyLabel = JLabel("Key:")
+        self._authKeyField = JTextField(20)
+        self._authValueLabel = JLabel("Value:")
+        self._authValueField = JTextField(30)
+        
+        # Profile name
+        profileLabel = JLabel("Profile Name:")
+        self._profileNameField = JTextField(20)
+        self._profileNameField.setToolTipText("Give this authentication a name for easy management")
+        
+        # Add auth button
+        addAuthButton = JButton("Add Authentication", actionPerformed=self._addAuthProfile)
+        
+        # Layout auth panel
+        addAuthLayout.setHorizontalGroup(
+            addAuthLayout.createParallelGroup()
+                .addGroup(addAuthLayout.createSequentialGroup()
+                    .addComponent(authTypeLabel)
+                    .addComponent(self._authTypeCombo)
+                    .addComponent(profileLabel)
+                    .addComponent(self._profileNameField))
+                .addGroup(addAuthLayout.createSequentialGroup()
+                    .addComponent(self._authKeyLabel)
+                    .addComponent(self._authKeyField)
+                    .addComponent(self._authValueLabel)
+                    .addComponent(self._authValueField))
+                .addComponent(addAuthButton)
+        )
+        
+        addAuthLayout.setVerticalGroup(
+            addAuthLayout.createSequentialGroup()
+                .addGroup(addAuthLayout.createParallelGroup(GroupLayout.Alignment.BASELINE)
+                    .addComponent(authTypeLabel)
+                    .addComponent(self._authTypeCombo)
+                    .addComponent(profileLabel)
+                    .addComponent(self._profileNameField))
+                .addGroup(addAuthLayout.createParallelGroup(GroupLayout.Alignment.BASELINE)
+                    .addComponent(self._authKeyLabel)
+                    .addComponent(self._authKeyField)
+                    .addComponent(self._authValueLabel)
+                    .addComponent(self._authValueField))
+                .addComponent(addAuthButton)
+        )
+        
+        # Add the add auth panel to the auth panel
+        authPanel.add(addAuthPanel, BorderLayout.NORTH)
+        
+        # Authentication profiles table
+        authTablePanel = JPanel(BorderLayout())
+        authTablePanel.setBorder(BorderFactory.createEmptyBorder(10, 0, 0, 0))
+        
+        # Table for existing auth profiles
+        self._authTableModel = DefaultTableModel(["Profile Name", "Type", "Key/Username", "Value/Password", "Actions"], 0)
+        self._authTable = JTable(self._authTableModel)
+        self._authTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
+        
+        # Set column widths
+        self._authTable.getColumnModel().getColumn(0).setPreferredWidth(120)  # Profile Name
+        self._authTable.getColumnModel().getColumn(1).setPreferredWidth(80)   # Type
+        self._authTable.getColumnModel().getColumn(2).setPreferredWidth(100)  # Key/Username
+        self._authTable.getColumnModel().getColumn(3).setPreferredWidth(100)  # Value/Password
+        self._authTable.getColumnModel().getColumn(4).setPreferredWidth(150)  # Actions
+        
+        # Add table to panel
+        authTablePanel.add(JScrollPane(self._authTable), BorderLayout.CENTER)
+        
+        # Auth table buttons
+        authButtonPanel = JPanel()
+        editAuthButton = JButton("Edit Selected", actionPerformed=self._editAuthProfile)
+        deleteAuthButton = JButton("Delete Selected", actionPerformed=self._deleteAuthProfile)
+        applySelectedButton = JButton("Apply Selected", actionPerformed=self._applySelectedAuth)
+        clearAllButton = JButton("Clear All", actionPerformed=self._clearAllAuth)
+        
+        authButtonPanel.add(editAuthButton)
+        authButtonPanel.add(deleteAuthButton)
+        authButtonPanel.add(applySelectedButton)
+        authButtonPanel.add(clearAllButton)
+        
+        # Add save/load buttons
+        saveLoadPanel = JPanel()
+        saveProfilesButton = JButton("Save Profiles", actionPerformed=self._saveAuthProfiles)
+        loadProfilesButton = JButton("Load Profiles", actionPerformed=self._loadAuthProfiles)
+        
+        saveProfilesButton.setBackground(Color(60, 120, 60))
+        saveProfilesButton.setForeground(Color.WHITE)
+        loadProfilesButton.setBackground(Color(60, 60, 120))
+        loadProfilesButton.setForeground(Color.WHITE)
+        
+        saveLoadPanel.add(saveProfilesButton)
+        saveLoadPanel.add(loadProfilesButton)
+        
+        authButtonPanel.add(saveLoadPanel)
+        
+        authTablePanel.add(authButtonPanel, BorderLayout.SOUTH)
+        
+        # Add the table panel to the auth panel
+        authPanel.add(authTablePanel, BorderLayout.CENTER)
+        
+        # Custom headers section
+        headersBorder = BorderFactory.createTitledBorder("Custom Headers (Applied to All Requests)")
+        headersPanel = JPanel(BorderLayout())
+        headersPanel.setBorder(headersBorder)
+        
+        # Headers table with better columns
+        self._headersTableModel = DefaultTableModel(["Header Name", "Header Value", "Description", "Enabled"], 0)
+        self._headersTable = JTable(self._headersTableModel)
+        self._headersTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
+        
+        # Add mouse listener for clicking on enabled column
+        self._headersTable.addMouseListener(self._createHeadersTableMouseListener())
+        
+        # Set column widths
+        self._headersTable.getColumnModel().getColumn(0).setPreferredWidth(150)  # Header Name
+        self._headersTable.getColumnModel().getColumn(1).setPreferredWidth(200)  # Header Value
+        self._headersTable.getColumnModel().getColumn(2).setPreferredWidth(120)  # Description
+        self._headersTable.getColumnModel().getColumn(3).setPreferredWidth(80)   # Enabled
+        
+        # Add table to panel
+        headersPanel.add(JScrollPane(self._headersTable), BorderLayout.CENTER)
+        
+        # Enhanced headers buttons
+        headerButtonPanel = JPanel()
+        addHeaderButton = JButton("Add Header", actionPerformed=self._addHeader)
+        editHeaderButton = JButton("Edit Selected", actionPerformed=self._editHeader)
+        removeHeaderButton = JButton("Remove Selected", actionPerformed=self._removeHeader)
+        clearAllHeadersButton = JButton("Clear All", actionPerformed=self._clearAllHeaders)
+        
+        # Style buttons
+        addHeaderButton.setBackground(Color(60, 120, 60))
+        addHeaderButton.setForeground(Color.WHITE)
+        editHeaderButton.setBackground(Color(60, 60, 120))
+        editHeaderButton.setForeground(Color.WHITE)
+        removeHeaderButton.setBackground(Color(120, 60, 60))
+        removeHeaderButton.setForeground(Color.WHITE)
+        clearAllHeadersButton.setBackground(Color(80, 80, 80))
+        clearAllHeadersButton.setForeground(Color.WHITE)
+        
+        headerButtonPanel.add(addHeaderButton)
+        headerButtonPanel.add(editHeaderButton)
+        headerButtonPanel.add(removeHeaderButton)
+        headerButtonPanel.add(clearAllHeadersButton)
+        
+        # Add save/load buttons for headers
+        headerSaveLoadPanel = JPanel()
+        saveHeadersButton = JButton("Save Headers", actionPerformed=self._saveHeaders)
+        loadHeadersButton = JButton("Load Headers", actionPerformed=self._loadHeaders)
+        
+        saveHeadersButton.setBackground(Color(60, 120, 60))
+        saveHeadersButton.setForeground(Color.WHITE)
+        loadHeadersButton.setBackground(Color(60, 60, 120))
+        loadHeadersButton.setForeground(Color.WHITE)
+        
+        headerSaveLoadPanel.add(saveHeadersButton)
+        headerSaveLoadPanel.add(loadHeadersButton)
+        
+        # Combine button panels
+        headerControlsPanel = JPanel(BorderLayout())
+        headerControlsPanel.add(headerButtonPanel, BorderLayout.NORTH)
+        headerControlsPanel.add(headerSaveLoadPanel, BorderLayout.SOUTH)
+        
+        headersPanel.add(headerControlsPanel, BorderLayout.SOUTH)
+        
+        # Request options
+        optionsBorder = BorderFactory.createTitledBorder("Request Options")
+        optionsPanel = JPanel()
+        optionsPanel.setBorder(optionsBorder)
+        optionsLayout = GroupLayout(optionsPanel)
+        optionsPanel.setLayout(optionsLayout)
+        optionsLayout.setAutoCreateGaps(True)
+        optionsLayout.setAutoCreateContainerGaps(True)
+        
+        # Options checkboxes
+        self._followRedirectsCheck = JCheckBox("Follow Redirects", True)
+        self._validateCertCheck = JCheckBox("Validate SSL Certificates", False)
+        self._includeDefaultHeadersCheck = JCheckBox("Include Default Headers", True)
+        
+        # Timeout
+        timeoutLabel = JLabel("Timeout (seconds):")
+        self._timeoutField = JTextField("30", 5)
+        
+        # Layout options
+        optionsLayout.setHorizontalGroup(
+            optionsLayout.createParallelGroup()
+                .addComponent(self._followRedirectsCheck)
+                .addComponent(self._validateCertCheck)
+                .addComponent(self._includeDefaultHeadersCheck)
+                .addGroup(optionsLayout.createSequentialGroup()
+                    .addComponent(timeoutLabel)
+                    .addComponent(self._timeoutField))
+        )
+        
+        optionsLayout.setVerticalGroup(
+            optionsLayout.createSequentialGroup()
+                .addComponent(self._followRedirectsCheck)
+                .addComponent(self._validateCertCheck)
+                .addComponent(self._includeDefaultHeadersCheck)
+                .addGroup(optionsLayout.createParallelGroup(GroupLayout.Alignment.BASELINE)
+                    .addComponent(timeoutLabel)
+                    .addComponent(self._timeoutField))
+        )
+        
+        # Main layout
+        layout.setHorizontalGroup(
+            layout.createParallelGroup()
+                .addComponent(authPanel)
+                .addComponent(headersPanel)
+                .addComponent(optionsPanel)
+        )
+        
+        layout.setVerticalGroup(
+            layout.createSequentialGroup()
+                .addComponent(authPanel)
+                .addComponent(headersPanel)
+                .addComponent(optionsPanel)
+        )
+        
+        return JScrollPane(panel)
+    
+    def _createTesterTab(self):
+        """Create the main API tester tab"""
+        # Create main panel
+        mainPanel = JPanel(BorderLayout())
+        
+        # Create split pane for left and right panels
+        splitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT)
+        
+        # Left panel - Endpoint list
         leftPanel = JPanel(BorderLayout())
         leftPanel.setBorder(BorderFactory.createTitledBorder("Endpoints"))
         leftPanel.setPreferredSize(Dimension(300, 600))
         
-        # Apply dark theme to the panel
-        leftPanel.setBackground(Color(35, 35, 35))  # Dark background
-        leftPanel.setForeground(Color(200, 200, 200))  # Light text
+        # Endpoint count label
+        self._endpointCountLabel = JLabel("No endpoints loaded")
+        leftPanel.add(self._endpointCountLabel, BorderLayout.NORTH)
+        
+        # Search panel
+        searchPanel = JPanel(BorderLayout())
+        searchPanel.setBorder(BorderFactory.createEmptyBorder(5, 0, 5, 0))
+        
+        # Search label
+        searchLabel = JLabel("Search:")
+        searchLabel.setForeground(Color(200, 200, 200))
+        searchPanel.add(searchLabel, BorderLayout.WEST)
+        
+        # Search field with history
+        self._searchField = JTextField(20)
+        self._searchField.setToolTipText("Type to search endpoints by method, path, or description")
+        self._searchField.getDocument().addDocumentListener(self._createSearchDocumentListener())
+        
+        # Add key listener for Enter key to select first result
+        self._searchField.addKeyListener(self._createSearchKeyListener())
+        
+        # Search history button
+        historyButton = JButton("⌄", actionPerformed=self._showSearchHistory)
+        historyButton.setToolTipText("Show search history")
+        historyButton.setPreferredSize(Dimension(25, 25))
+        historyButton.setBackground(Color(80, 80, 80))
+        historyButton.setForeground(Color(200, 200, 200))
+        
+        searchPanel.add(self._searchField, BorderLayout.CENTER)
+        searchPanel.add(historyButton, BorderLayout.EAST)
+        
+        # Clear search button (moved to options panel)
+        clearSearchButton = JButton("Clear", actionPerformed=self._clearSearch)
+        clearSearchButton.setToolTipText("Clear all filters and search")
+        clearSearchButton.setPreferredSize(Dimension(60, 20))
+        clearSearchButton.setBackground(Color(80, 80, 80))
+        clearSearchButton.setForeground(Color(200, 200, 200))
+        
+        # Search options panel
+        searchOptionsPanel = JPanel(FlowLayout(FlowLayout.LEFT))
+        searchOptionsPanel.setBorder(BorderFactory.createEmptyBorder(2, 0, 0, 0))
+        
+        # Method filter
+        methodFilterLabel = JLabel("Method:")
+        methodFilterLabel.setForeground(Color(180, 180, 180))
+        methodFilterLabel.setFont(Font("Dialog", Font.PLAIN, 10))
+        
+        self._methodFilterCombo = JComboBox(["All", "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
+        self._methodFilterCombo.setPreferredSize(Dimension(80, 20))
+        self._methodFilterCombo.addActionListener(lambda e: self._applyFilters())
+        
+        # Tag filter
+        tagFilterLabel = JLabel("Tag:")
+        tagFilterLabel.setForeground(Color(180, 180, 180))
+        tagFilterLabel.setFont(Font("Dialog", Font.PLAIN, 10))
+        
+        self._tagFilterCombo = JComboBox(["All"])
+        self._tagFilterCombo.setPreferredSize(Dimension(100, 20))
+        self._tagFilterCombo.addActionListener(lambda e: self._applyFilters())
+        
+        # Search scope filter
+        scopeLabel = JLabel("Search in:")
+        scopeLabel.setForeground(Color(180, 180, 180))
+        scopeLabel.setFont(Font("Dialog", Font.PLAIN, 10))
+        
+        self._searchScopeCombo = JComboBox(["All", "Method", "Path", "Description", "Tags"])
+        self._searchScopeCombo.setPreferredSize(Dimension(100, 20))
+        self._searchScopeCombo.addActionListener(lambda e: self._applyFilters())
+        
+        searchOptionsPanel.add(methodFilterLabel)
+        searchOptionsPanel.add(self._methodFilterCombo)
+        searchOptionsPanel.add(tagFilterLabel)
+        searchOptionsPanel.add(self._tagFilterCombo)
+        searchOptionsPanel.add(scopeLabel)
+        searchOptionsPanel.add(self._searchScopeCombo)
+        searchOptionsPanel.add(clearSearchButton)
+        
+        # Search statistics label
+        self._searchStatsLabel = JLabel("")
+        self._searchStatsLabel.setForeground(Color(150, 150, 150))
+        self._searchStatsLabel.setFont(Font("Dialog", Font.PLAIN, 9))
+        self._searchStatsLabel.setBorder(BorderFactory.createEmptyBorder(2, 5, 0, 0))
+        searchOptionsPanel.add(self._searchStatsLabel)
+        
+        # Add search options below the search field
+        searchContainerPanel = JPanel(BorderLayout())
+        searchContainerPanel.add(searchPanel, BorderLayout.NORTH)
+        searchContainerPanel.add(searchOptionsPanel, BorderLayout.CENTER)
         
         # Endpoint list
         self._endpointListModel = DefaultListModel()
         self._endpointList = JList(self._endpointListModel)
         self._endpointList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
-        self._endpointList.addListSelectionListener(lambda e: self._selectEndpoint())
+        self._endpointList.addListSelectionListener(self._createListSelectionListener())
         
-        # Make the list more visible with better styling - Dark theme
-        self._endpointList.setFont(Font("Monospaced", Font.PLAIN, 12))
-        self._endpointList.setBackground(Color(45, 45, 45))  # Dark gray background
-        self._endpointList.setForeground(Color(200, 200, 200))  # Light gray text
-        self._endpointList.setSelectionBackground(Color(100, 200, 255))  # Blue selection
-        self._endpointList.setSelectionForeground(Color.WHITE)  # White selection text
-        self._endpointList.setToolTipText("Click on an endpoint to load it for testing")
-        
-        # Add a visible border to the list - Dark theme
-        self._endpointList.setBorder(BorderFactory.createLineBorder(Color(100, 100, 100)))
-        
-        # Set minimum size to ensure visibility
-        self._endpointList.setMinimumSize(Dimension(250, 400))
-        
-        # Add a label above the list
-        listLabel = JLabel("Available Endpoints:")
-        listLabel.setFont(Font("Dialog", Font.BOLD, 14))
-        listLabel.setForeground(Color(200, 200, 200))  # Light text for dark theme
-        listLabel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5))
-        
-        # Add endpoint count label and refresh button in a small panel
+        # Info panel with debug buttons
         infoPanel = JPanel(BorderLayout())
-        infoPanel.setBackground(Color(35, 35, 35))  # Dark background
         
-        self._endpointCountLabel = JLabel("No endpoints loaded")
-        self._endpointCountLabel.setFont(Font("Dialog", Font.PLAIN, 11))
-        self._endpointCountLabel.setForeground(Color(150, 150, 150))  # Medium gray for dark theme
-        self._endpointCountLabel.setBorder(BorderFactory.createEmptyBorder(0, 5, 5, 5))
-        
-        refreshButton = JButton("Refresh List", actionPerformed=self._refreshEndpointList)
-        refreshButton.setToolTipText("Refresh the endpoint list")
-        refreshButton.setBackground(Color(60, 60, 60))  # Dark button background
-        refreshButton.setForeground(Color(200, 200, 200))  # Light button text
-        
-        infoPanel.add(self._endpointCountLabel, BorderLayout.WEST)
-        infoPanel.add(refreshButton, BorderLayout.EAST)
-        
-        leftPanel.add(listLabel, BorderLayout.NORTH)
-        leftPanel.add(infoPanel, BorderLayout.NORTH)
-        leftPanel.add(JScrollPane(self._endpointList), BorderLayout.CENTER)
-        
-        # Add a debug button to manually populate the list
+        # Debug button
         debugButton = JButton("Debug List", actionPerformed=self._debugEndpointList)
         debugButton.setToolTipText("Debug endpoint list contents")
         debugButton.setBackground(Color(60, 60, 60))  # Dark button background
         debugButton.setForeground(Color(200, 200, 200))  # Light button text
         infoPanel.add(debugButton, BorderLayout.CENTER)
+        
+        # Add test buttons for debugging
+        testEndpointButton = JButton("Add Test Endpoint", actionPerformed=self._addTestEndpoint)
+        testEndpointButton.setToolTipText("Add a test endpoint to verify list functionality")
+        testEndpointButton.setBackground(Color(60, 60, 60))  # Dark button background
+        testEndpointButton.setForeground(Color(200, 200, 200))  # Light button text
+        
+        testComprehensiveButton = JButton("Test Comprehensive", actionPerformed=self._testCurrentEndpointComprehensive)
+        testComprehensiveButton.setToolTipText("Test comprehensive example generation for current endpoint")
+        testComprehensiveButton.setBackground(Color(60, 60, 60))  # Dark button background
+        testComprehensiveButton.setForeground(Color(200, 200, 200))  # Light button text
+        
+        # Create a panel for the test buttons
+        testButtonsPanel = JPanel()
+        testButtonsPanel.setLayout(FlowLayout(FlowLayout.LEFT))
+        testButtonsPanel.add(testEndpointButton)
+        testButtonsPanel.add(testComprehensiveButton)
+        
+        infoPanel.add(testButtonsPanel, BorderLayout.EAST)
+        
+        # Add search panel and endpoint list to a container panel
+        listContainerPanel = JPanel(BorderLayout())
+        listContainerPanel.add(searchContainerPanel, BorderLayout.NORTH)
+        listContainerPanel.add(JScrollPane(self._endpointList), BorderLayout.CENTER)
+        
+        leftPanel.add(listContainerPanel, BorderLayout.CENTER)
+        leftPanel.add(infoPanel, BorderLayout.SOUTH)
+        
+        # Debug: Log the creation of the endpoint list
+        self._callbacks.printOutput("Created endpoint list with model size: " + str(self._endpointListModel.getSize()))
+        self._callbacks.printOutput("Endpoint list visible: " + str(self._endpointList.isVisible()))
+        self._callbacks.printOutput("Endpoint list enabled: " + str(self._endpointList.isEnabled()))
         
         # Right panel - Request/Response editor
         rightPanel = JPanel(BorderLayout())
@@ -780,215 +1119,410 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         
         requestPanel.add(controlPanel, BorderLayout.NORTH)
         
-        # Request body editor with syntax highlighting
+        # Request body editor (only for methods that support bodies)
+        self._bodyPanel = JPanel(BorderLayout())
+        self._bodyPanel.setBorder(BorderFactory.createTitledBorder("Request Body"))
+        
+        # Request editor with syntax highlighting
         self._requestEditor = JTextPane()
         self._requestEditor.setFont(Font("Monospaced", Font.PLAIN, 12))
-        self._requestEditor.setDocument(DefaultStyledDocument())
-        self._requestEditor.setPreferredSize(Dimension(500, 250))
+        self._requestEditor.setBackground(Color(40, 40, 40))
+        self._requestEditor.setForeground(Color(200, 200, 200))
         
-        # Add popup menu to request editor
+        # Create and attach right-click popup for sending to Repeater/Intruder/etc.
         self._createRequestPopupMenu()
         self._requestEditor.addMouseListener(RequestMouseListener(self))
         
-        # Add document listener for live syntax highlighting (disabled by default to prevent duplication)
-        # self._requestEditor.getDocument().addDocumentListener(RequestDocumentListener(self))
+        # Also add right-click popup to the request URL field and control panel
+        self._requestUrlField.addMouseListener(RequestMouseListener(self))
+        controlPanel.addMouseListener(RequestMouseListener(self))
         
-        # Create request editor panel with buttons
-        requestEditorPanel = JPanel(BorderLayout())
-        requestEditorPanel.add(JScrollPane(self._requestEditor), BorderLayout.CENTER)
-        
-        # Add formatting buttons
-        formatButtonPanel = JPanel()
-        prettyPrintButton = JButton("Pretty Print", actionPerformed=self._prettyPrintRequest)
-        prettyPrintButton.setToolTipText("Format JSON/XML in request body")
-        formatButtonPanel.add(prettyPrintButton)
-        
+        # Formatting buttons
+        formatPanel = JPanel()
+        prettyButton = JButton("Pretty Print", actionPerformed=self._prettyPrintRequest)
         minifyButton = JButton("Minify", actionPerformed=self._minifyRequest)
-        minifyButton.setToolTipText("Compress JSON/XML in request body")
-        formatButtonPanel.add(minifyButton)
-        
         highlightButton = JButton("Highlight", actionPerformed=self._highlightRequest)
-        highlightButton.setToolTipText("Apply syntax highlighting to request")
-        formatButtonPanel.add(highlightButton)
-        
         themeButton = JButton("Burp Theme", actionPerformed=self._toggleTheme)
-        themeButton.setToolTipText("Toggle between Burp and Dark color themes")
-        formatButtonPanel.add(themeButton)
-        self._themeButton = themeButton
         
-        requestEditorPanel.add(formatButtonPanel, BorderLayout.SOUTH)
-        requestPanel.add(requestEditorPanel, BorderLayout.CENTER)
+        formatPanel.add(prettyButton)
+        formatPanel.add(minifyButton)
+        formatPanel.add(highlightButton)
+        formatPanel.add(themeButton)
         
-        # Parameters panel
-        parametersPanel = self._createParametersPanel()
+        self._bodyPanel.add(formatPanel, BorderLayout.NORTH)
+        self._bodyPanel.add(JScrollPane(self._requestEditor), BorderLayout.CENTER)
         
-        # Headers panel for this request
-        requestHeadersPanel = self._createRequestHeadersPanel()
+        # Initially hide body panel for GET requests
+        self._updateBodyPanelVisibility()
         
-        # Add tabs to request tabbed pane
-        requestTabbedPane.addTab("Request", requestPanel)
-        requestTabbedPane.addTab("Parameters", parametersPanel)
-        requestTabbedPane.addTab("Headers", requestHeadersPanel)
+        # Add method change listener to show/hide body panel
+        self._methodCombo.addActionListener(lambda e: self._validateMethodChange())
+        
+        requestPanel.add(self._bodyPanel, BorderLayout.CENTER)
+        
+        # Add right-click popup to the main request panel and body panel
+        requestPanel.addMouseListener(RequestMouseListener(self))
+        self._bodyPanel.addMouseListener(RequestMouseListener(self))
         
         # Response panel
         responsePanel = JPanel(BorderLayout())
         responsePanel.setBorder(BorderFactory.createTitledBorder("Response"))
         
-        # Response info
+        # Response info label and controls
+        responseInfoPanel = JPanel(BorderLayout())
+        
+        # Response info label (status, length, time)
         self._responseInfoLabel = JLabel("No response yet")
-        responsePanel.add(self._responseInfoLabel, BorderLayout.NORTH)
+        self._responseInfoLabel.setForeground(Color(200, 200, 200))
+        self._responseInfoLabel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5))
+        responseInfoPanel.add(self._responseInfoLabel, BorderLayout.WEST)
         
-        # Response body viewer with syntax highlighting
-        self._responseViewer = JTextPane()
-        self._responseViewer.setFont(Font("Monospaced", Font.PLAIN, 12))
-        self._responseViewer.setDocument(DefaultStyledDocument())
-        self._responseViewer.setEditable(False)
-        self._responseViewer.setPreferredSize(Dimension(500, 250))
-        responsePanel.add(JScrollPane(self._responseViewer), BorderLayout.CENTER)
+        # Response control buttons
+        responseButtonPanel = JPanel()
+        clearResponseButton = JButton("Clear Response", actionPerformed=self._clearResponse)
+        clearResponseButton.setBackground(Color(60, 60, 60))
+        clearResponseButton.setForeground(Color(200, 200, 200))
         
-        # Split pane for request/response
-        splitPane = JSplitPane(JSplitPane.VERTICAL_SPLIT, requestTabbedPane, responsePanel)
-        splitPane.setDividerLocation(400)
-        rightPanel.add(splitPane, BorderLayout.CENTER)
+        # Debug button to show endpoint parameters
+        debugParamsButton = JButton("Show Params", actionPerformed=self._showEndpointParameters)
+        debugParamsButton.setBackground(Color(80, 80, 80))
+        debugParamsButton.setForeground(Color(200, 200, 200))
+        debugParamsButton.setToolTipText("Show current endpoint parameters for debugging")
         
-        # Main split pane
-        mainSplitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftPanel, rightPanel)
-        mainSplitPane.setDividerLocation(300)
-        panel.add(mainSplitPane, BorderLayout.CENTER)
+        responseButtonPanel.add(clearResponseButton)
+        responseButtonPanel.add(debugParamsButton)
+        responseInfoPanel.add(responseButtonPanel, BorderLayout.EAST)
         
-        return panel
+        responsePanel.add(responseInfoPanel, BorderLayout.NORTH)
         
-    def _createSettingsTab(self):
-        """Create the settings tab"""
-        panel = JPanel()
-        layout = GroupLayout(panel)
-        panel.setLayout(layout)
-        layout.setAutoCreateGaps(True)
-        layout.setAutoCreateContainerGaps(True)
+        # Response editor with syntax highlighting
+        self._responseEditor = JTextPane()
+        self._responseEditor.setFont(Font("Monospaced", Font.PLAIN, 12))
+        self._responseEditor.setBackground(Color(40, 40, 40))
+        self._responseEditor.setForeground(Color(200, 200, 200))
+        self._responseEditor.setEditable(False)
+        self._responseEditor.setText("Send a request to see the response here...\n\n" +
+                                   "The response will appear here with syntax highlighting.\n" +
+                                   "Status, response time, and content length will be shown above.")
         
-        # Authentication section
-        authBorder = BorderFactory.createTitledBorder("Authentication")
-        authPanel = JPanel()
-        authPanel.setBorder(authBorder)
-        authLayout = GroupLayout(authPanel)
-        authPanel.setLayout(authLayout)
-        authLayout.setAutoCreateGaps(True)
-        authLayout.setAutoCreateContainerGaps(True)
+        # Style the response editor
+        responseScrollPane = JScrollPane(self._responseEditor)
+        responseScrollPane.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5))
+        responsePanel.add(responseScrollPane, BorderLayout.CENTER)
         
-        # Auth type
-        authTypeLabel = JLabel("Auth Type:")
-        self._authTypeCombo = JComboBox(["None", "Bearer Token", "API Key", "Basic Auth", "Custom Header"])
-        self._authTypeCombo.addActionListener(lambda e: self._updateAuthFields())
+        # Add panels to request tabbed pane
+        requestTabbedPane.addTab("Request", requestPanel)
+        requestTabbedPane.addTab("Parameters", self._createParametersPanel())
+        requestTabbedPane.addTab("Headers", self._createRequestHeadersPanel())
         
-        # Auth fields
-        self._authKeyLabel = JLabel("Key:")
-        self._authKeyField = JTextField(20)
-        self._authValueLabel = JLabel("Value:")
-        self._authValueField = JTextField(30)
+        # Create a split pane for request and response (like Burp Repeater)
+        requestResponseSplitPane = JSplitPane(JSplitPane.VERTICAL_SPLIT, requestTabbedPane, responsePanel)
+        requestResponseSplitPane.setDividerLocation(400)  # Give more space to request initially
+        requestResponseSplitPane.setResizeWeight(0.6)  # Request gets 60% of space
         
-        # Apply auth button
-        applyAuthButton = JButton("Apply Authentication", actionPerformed=self._applyAuth)
+        # Set minimum sizes to ensure both panels are always visible
+        requestTabbedPane.setMinimumSize(Dimension(300, 200))
+        responsePanel.setMinimumSize(Dimension(300, 150))
         
-        # Layout auth panel
-        authLayout.setHorizontalGroup(
-            authLayout.createParallelGroup()
-                .addGroup(authLayout.createSequentialGroup()
-                    .addComponent(authTypeLabel)
-                    .addComponent(self._authTypeCombo))
-                .addGroup(authLayout.createSequentialGroup()
-                    .addComponent(self._authKeyLabel)
-                    .addComponent(self._authKeyField)
-                    .addComponent(self._authValueLabel)
-                    .addComponent(self._authValueField))
-                .addComponent(applyAuthButton)
-        )
+        rightPanel.add(requestResponseSplitPane, BorderLayout.CENTER)
         
-        authLayout.setVerticalGroup(
-            authLayout.createSequentialGroup()
-                .addGroup(authLayout.createParallelGroup(GroupLayout.Alignment.BASELINE)
-                    .addComponent(authTypeLabel)
-                    .addComponent(self._authTypeCombo))
-                .addGroup(authLayout.createParallelGroup(GroupLayout.Alignment.BASELINE)
-                    .addComponent(self._authKeyLabel)
-                    .addComponent(self._authKeyField)
-                    .addComponent(self._authValueLabel)
-                    .addComponent(self._authValueField))
-                .addComponent(applyAuthButton)
-        )
+        # Set up split pane
+        splitPane.setLeftComponent(leftPanel)
+        splitPane.setRightComponent(rightPanel)
+        splitPane.setDividerLocation(300)
         
-        # Custom headers section
-        headersBorder = BorderFactory.createTitledBorder("Custom Headers")
-        headersPanel = JPanel(BorderLayout())
-        headersPanel.setBorder(headersBorder)
+        mainPanel.add(splitPane, BorderLayout.CENTER)
         
-        # Headers table
-        self._headersTableModel = DefaultTableModel(["Header Name", "Header Value"], 0)
-        self._headersTable = JTable(self._headersTableModel)
-        headersPanel.add(JScrollPane(self._headersTable), BorderLayout.CENTER)
+        return mainPanel
+    
+    def _clearResponse(self, event):
+        """Clear the response panel"""
+        self._responseEditor.setText("Response cleared")
+        self._responseInfoLabel.setText("No response yet")
+        self._responseInfoLabel.setForeground(Color(200, 200, 200))
+    
+    def _showEndpointParameters(self, event):
+        """Show debug info about current endpoint parameters"""
+        if not self.current_endpoint:
+            JOptionPane.showMessageDialog(self._mainPanel, "No endpoint selected", "Info", JOptionPane.INFORMATION_MESSAGE)
+            return
+            
+        details = self.current_endpoint["details"]
+        method = self.current_endpoint["method"]
+        path = self.current_endpoint["path"]
         
-        # Headers buttons
-        headerButtonPanel = JPanel()
-        addHeaderButton = JButton("Add Header", actionPerformed=self._addHeader)
-        removeHeaderButton = JButton("Remove Selected", actionPerformed=self._removeHeader)
-        headerButtonPanel.add(addHeaderButton)
-        headerButtonPanel.add(removeHeaderButton)
-        headersPanel.add(headerButtonPanel, BorderLayout.SOUTH)
+        # Get parameters
+        parameters = details.get("parameters", [])
+        path_parameters = self.current_endpoint.get("path_parameters", [])
         
-        # Request options
-        optionsBorder = BorderFactory.createTitledBorder("Request Options")
-        optionsPanel = JPanel()
-        optionsPanel.setBorder(optionsBorder)
-        optionsLayout = GroupLayout(optionsPanel)
-        optionsPanel.setLayout(optionsLayout)
-        optionsLayout.setAutoCreateGaps(True)
-        optionsLayout.setAutoCreateContainerGaps(True)
+        # Check for body parameters
+        body_params = [p for p in parameters if p.get("in") == "body"]
         
-        # Options checkboxes
-        self._followRedirectsCheck = JCheckBox("Follow Redirects", True)
-        self._validateCertCheck = JCheckBox("Validate SSL Certificates", False)
-        self._includeDefaultHeadersCheck = JCheckBox("Include Default Headers", True)
+        info = "Endpoint: " + method + " " + path + "\n\n"
+        info += "Method-level parameters: " + str(len(parameters)) + "\n"
+        info += "Path-level parameters: " + str(len(path_parameters)) + "\n"
+        info += "Body parameters: " + str(len(body_params)) + "\n\n"
         
-        # Timeout
-        timeoutLabel = JLabel("Timeout (seconds):")
-        self._timeoutField = JTextField("30", 5)
+        if body_params:
+            info += "Body parameters found:\n"
+            for param in body_params:
+                info += "- " + param.get("name", "unnamed") + " (" + param.get("type", "unknown") + ")\n"
+        else:
+            info += "No body parameters defined for this method.\n"
+            info += "Body panel should be hidden.\n"
         
-        # Layout options
-        optionsLayout.setHorizontalGroup(
-            optionsLayout.createParallelGroup()
-                .addComponent(self._followRedirectsCheck)
-                .addComponent(self._validateCertCheck)
-                .addComponent(self._includeDefaultHeadersCheck)
-                .addGroup(optionsLayout.createSequentialGroup()
-                    .addComponent(timeoutLabel)
-                    .addComponent(self._timeoutField))
-        )
+        JOptionPane.showMessageDialog(self._mainPanel, info, "Endpoint Parameters", JOptionPane.INFORMATION_MESSAGE)
+    
+    def _createSearchDocumentListener(self):
+        """Create a document listener for the search field"""
+        class SearchDocumentListener(DocumentListener):
+            def __init__(self, extender):
+                self.extender = extender
+            
+            def insertUpdate(self, event):
+                self.extender._performSearch()
+            
+            def removeUpdate(self, event):
+                self.extender._performSearch()
+            
+            def changedUpdate(self, event):
+                self.extender._performSearch()
         
-        optionsLayout.setVerticalGroup(
-            optionsLayout.createSequentialGroup()
-                .addComponent(self._followRedirectsCheck)
-                .addComponent(self._validateCertCheck)
-                .addComponent(self._includeDefaultHeadersCheck)
-                .addGroup(optionsLayout.createParallelGroup(GroupLayout.Alignment.BASELINE)
-                    .addComponent(timeoutLabel)
-                    .addComponent(self._timeoutField))
-        )
+        return SearchDocumentListener(self)
+    
+    def _createSearchKeyListener(self):
+        """Create a key listener for the search field"""
+        class SearchKeyListener(KeyAdapter):
+            def __init__(self, extender):
+                self.extender = extender
+            
+            def keyPressed(self, event):
+                if event.getKeyCode() == KeyEvent.VK_ENTER:
+                    # Select first result when Enter is pressed
+                    if self.extender._endpointListModel.getSize() > 0:
+                        self.extender._endpointList.setSelectedIndex(0)
+                        self.extender._endpointList.requestFocus()
+                elif event.getKeyCode() == KeyEvent.VK_ESCAPE:
+                    # Clear search when Escape is pressed
+                    self.extender._clearSearch(None)
+                elif event.getKeyCode() == KeyEvent.VK_DOWN:
+                    # Move focus to endpoint list when Down arrow is pressed
+                    self.extender._endpointList.requestFocus()
+                    if self.extender._endpointListModel.getSize() > 0:
+                        self.extender._endpointList.setSelectedIndex(0)
         
-        # Main layout
-        layout.setHorizontalGroup(
-            layout.createParallelGroup()
-                .addComponent(authPanel)
-                .addComponent(headersPanel)
-                .addComponent(optionsPanel)
-        )
+        return SearchKeyListener(self)
+    
+    def _showSearchHistory(self, event):
+        """Show search history dropdown"""
+        if not hasattr(self, '_searchHistory') or not self._searchHistory:
+            JOptionPane.showMessageDialog(self._mainPanel, "No search history yet", "Search History", JOptionPane.INFORMATION_MESSAGE)
+            return
         
-        layout.setVerticalGroup(
-            layout.createSequentialGroup()
-                .addComponent(authPanel)
-                .addComponent(headersPanel)
-                .addComponent(optionsPanel)
-        )
+        # Create history popup menu
+        popup = JPopupMenu()
         
-        return JScrollPane(panel)
+        for search_term in self._searchHistory[-10:]:  # Show last 10 searches
+            menu_item = JMenuItem(search_term)
+            menu_item.addActionListener(lambda e, term=search_term: self._loadSearchFromHistory(term))
+            popup.add(menu_item)
+        
+        # Show popup below the history button
+        button = event.getSource()
+        popup.show(button, 0, button.getHeight())
+    
+    def _loadSearchFromHistory(self, search_term):
+        """Load a search term from history"""
+        self._searchField.setText(search_term)
+        self._performSearch()
+    
+    def _addToSearchHistory(self, search_term):
+        """Add search term to history"""
+        if not hasattr(self, '_searchHistory'):
+            self._searchHistory = []
+        
+        # Remove if already exists
+        if search_term in self._searchHistory:
+            self._searchHistory.remove(search_term)
+        
+        # Add to front
+        self._searchHistory.insert(0, search_term)
+        
+        # Keep only last 20 searches
+        if len(self._searchHistory) > 20:
+            self._searchHistory = self._searchHistory[:20]
+    
+    def _performSearch(self):
+        """Perform search on endpoints"""
+        search_term = self._searchField.getText().strip()
+        
+        # Add to search history if not empty
+        if search_term:
+            self._addToSearchHistory(search_term)
+        
+        # Apply both search term and filters
+        self._applyFilters()
+    
+    def _applyFilters(self):
+        """Apply search term and filters to endpoints"""
+        search_term = self._searchField.getText().strip().lower()
+        selected_method = str(self._methodFilterCombo.getSelectedItem())
+        selected_tag = str(self._tagFilterCombo.getSelectedItem())
+        
+        # Filter endpoints based on search term and filters
+        filtered_endpoints = []
+        for endpoint in self.endpoints:
+            # Check method filter
+            if selected_method != "All" and endpoint["method"] != selected_method:
+                continue
+            
+            # Check tag filter
+            if selected_tag != "All":
+                endpoint_tags = endpoint.get("tags", [])
+                if selected_tag not in endpoint_tags:
+                    continue
+            
+            # Check search term
+            if search_term:
+                selected_scope = str(self._searchScopeCombo.getSelectedItem())
+                found = False
+                
+                if selected_scope == "All" or selected_scope == "Method":
+                    if search_term in endpoint["method"].lower():
+                        found = True
+                
+                if selected_scope == "All" or selected_scope == "Path":
+                    if search_term in endpoint["path"].lower():
+                        found = True
+                
+                if selected_scope == "All" or selected_scope == "Description":
+                    description = endpoint.get("description", "").lower()
+                    if search_term in description:
+                        found = True
+                
+                if selected_scope == "All" or selected_scope == "Tags":
+                    tags = " ".join(endpoint.get("tags", [])).lower()
+                    if search_term in tags:
+                        found = True
+                
+                if not found:
+                    continue
+            
+            filtered_endpoints.append(endpoint)
+        
+        # Update the list with filtered results
+        self._updateEndpointList(filtered_endpoints)
+        
+        # Update count label and search statistics
+        if filtered_endpoints:
+            if search_term or selected_method != "All" or selected_tag != "All":
+                self._endpointCountLabel.setText(str(len(filtered_endpoints)) + " of " + str(len(self.endpoints)) + " endpoints")
+                
+                # Show search statistics
+                stats_text = ""
+                if search_term:
+                    stats_text += "Search: '" + search_term + "' "
+                if selected_method != "All":
+                    stats_text += "Method: " + selected_method + " "
+                if selected_tag != "All":
+                    stats_text += "Tag: " + selected_tag + " "
+                
+                if hasattr(self, '_searchStatsLabel'):
+                    self._searchStatsLabel.setText(stats_text)
+            else:
+                self._endpointCountLabel.setText(str(len(filtered_endpoints)) + " endpoints loaded")
+                if hasattr(self, '_searchStatsLabel'):
+                    self._searchStatsLabel.setText("")
+        else:
+            self._endpointCountLabel.setText("No endpoints match the current filters")
+            if hasattr(self, '_searchStatsLabel'):
+                self._searchStatsLabel.setText("No results")
+    
+    def _showAllEndpoints(self):
+        """Show all endpoints (clear search)"""
+        self._updateEndpointList(self.endpoints)
+        self._endpointCountLabel.setText(str(len(self.endpoints)) + " endpoints loaded")
+    
+    def _updateEndpointList(self, endpoints_to_show):
+        """Update the endpoint list with filtered results"""
+        self._endpointListModel.clear()
+        
+        # Store the filtered endpoints for selection
+        self._filtered_endpoints = endpoints_to_show
+        
+        for endpoint in endpoints_to_show:
+            endpoint_text = endpoint["method"] + " " + endpoint["path"]
+            self._endpointListModel.addElement(endpoint_text)
+        
+        # Force UI update
+        self._endpointList.revalidate()
+        self._endpointList.repaint()
+    
+    def _clearSearch(self, event):
+        """Clear the search field and show all endpoints"""
+        self._searchField.setText("")
+        self._methodFilterCombo.setSelectedItem("All")
+        self._tagFilterCombo.setSelectedItem("All")
+        self._searchScopeCombo.setSelectedItem("All")
+        self._showAllEndpoints()
+    
+    def _validateMethodChange(self):
+        """Validate method change and update UI accordingly"""
+        if not self.current_endpoint:
+            return
+            
+        new_method = str(self._methodCombo.getSelectedItem())
+        current_method = self.current_endpoint["method"]
+        
+        if new_method != current_method:
+            self._callbacks.printOutput("Method changed from " + current_method + " to " + new_method)
+            self._callbacks.printOutput("WARNING: Method changed but endpoint details are for " + current_method)
+            self._callbacks.printOutput("Body panel visibility may be incorrect - endpoint parameters don't match method")
+            
+            # Show warning to user
+            JOptionPane.showMessageDialog(self._mainPanel, 
+                "Method changed to " + new_method + " but endpoint details are for " + current_method + ".\n" +
+                "Body panel visibility may be incorrect.\n\n" +
+                "Please select the endpoint again to get correct parameters for " + new_method + ".",
+                "Method Mismatch Warning", 
+                JOptionPane.WARNING_MESSAGE)
+        
+        # Update body panel visibility
+        self._updateBodyPanelVisibility()
+    
+    def _updateBodyPanelVisibility(self):
+        """Show/hide request body panel based on current method and its actual parameters"""
+        method = str(self._methodCombo.getSelectedItem())
+        
+        # First check if the current method actually has body parameters
+        has_body_param = False
+        if self.current_endpoint:
+            details = self.current_endpoint["details"]
+            parameters = details.get("parameters", [])
+            
+            # Check if this specific method has a body parameter
+            for param in parameters:
+                if param.get("in") == "body":
+                    has_body_param = True
+                    self._callbacks.printOutput("Method " + method + " has body parameter: " + param.get("name", "unnamed"))
+                    break
+        
+        # Methods that support request bodies AND have body parameters
+        body_supporting_methods = ["POST", "PUT", "PATCH", "DELETE"]
+        
+        if method in body_supporting_methods and has_body_param:
+            self._bodyPanel.setVisible(True)
+            self._requestEditor.setEnabled(True)
+            self._bodyPanel.setBorder(BorderFactory.createTitledBorder("Request Body"))
+            self._callbacks.printOutput("Showing body panel for " + method + " (has body parameter)")
+        else:
+            # Hide body panel - either method doesn't support bodies or has no body parameter
+            self._bodyPanel.setVisible(False)
+            self._requestEditor.setEnabled(False)
+            if method not in body_supporting_methods:
+                self._callbacks.printOutput("Hiding body panel for " + method + " (method doesn't support bodies)")
+            else:
+                self._callbacks.printOutput("Hiding body panel for " + method + " (no body parameter defined)")
     
     def _createParametersPanel(self):
         """Create the parameters panel with tables for different parameter types"""
@@ -1120,11 +1654,14 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             # Try parsing as JSON first
             try:
                 self.swagger_spec = json.loads(content)
-            except:
+                self._callbacks.printOutput("Successfully parsed as JSON")
+            except Exception as e:
+                self._callbacks.printOutput("JSON parsing failed: " + str(e))
                 # Try parsing as YAML
                 if yaml:
                     try:
                         self.swagger_spec = yaml.safe_load(content)
+                        self._callbacks.printOutput("Successfully parsed as YAML")
                     except Exception as e:
                         raise Exception("Failed to parse as JSON or YAML: " + str(e))
                 else:
@@ -1133,14 +1670,35 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             # Extract base URL
             self.base_url = self._extractBaseUrl(source_url)
             
+            # Debug: Show what we parsed
+            self._callbacks.printOutput("Parsed swagger spec keys: " + str(self.swagger_spec.keys()))
+            if "paths" in self.swagger_spec:
+                self._callbacks.printOutput("Paths found: " + str(list(self.swagger_spec["paths"].keys())))
+            
             # Update spec info
             self._updateSpecInfo()
             
             # Parse endpoints
             self._parseEndpoints()
             
+            # Update progress bar
             self._progressBar.setIndeterminate(False)
             self._progressBar.setString("Successfully loaded " + str(len(self.endpoints)) + " endpoints")
+            
+            # Force UI updates
+            self._callbacks.printOutput("Swagger spec loaded successfully. Forcing UI updates...")
+            
+            # Force the endpoint list to update
+            if hasattr(self, '_endpointList'):
+                self._endpointList.revalidate()
+                self._endpointList.repaint()
+                self._callbacks.printOutput("Forced endpoint list UI update")
+            
+            # Force the endpoints table to update
+            if hasattr(self, '_endpointsTable'):
+                self._endpointsTable.revalidate()
+                self._endpointsTable.repaint()
+                self._callbacks.printOutput("Forced endpoints table UI update")
             
         except Exception as e:
             self._progressBar.setIndeterminate(False)
@@ -1154,12 +1712,14 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         """Extract base URL from source URL and swagger spec"""
         parsed = urlparse(source_url)
         base = parsed.scheme + "://" + parsed.netloc
+        self._callbacks.printOutput("Source URL base: " + base)
         
         # Check for servers in OpenAPI 3.0
         if self.swagger_spec and "servers" in self.swagger_spec:
             servers = self.swagger_spec["servers"]
             if servers and len(servers) > 0:
                 server_url = servers[0].get("url", "")
+                self._callbacks.printOutput("Found OpenAPI 3.0 server: " + server_url)
                 if server_url.startswith("http"):
                     return server_url
                 elif server_url.startswith("/"):
@@ -1171,10 +1731,15 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             base_path = self.swagger_spec.get("basePath", "")
             schemes = self.swagger_spec.get("schemes", ["https"])
             
+            self._callbacks.printOutput("Swagger 2.0 - host: " + host + ", basePath: " + base_path + ", schemes: " + str(schemes))
+            
             if host:
                 scheme = schemes[0] if schemes else "https"
-                return scheme + "://" + host + base_path
+                final_url = scheme + "://" + host + base_path
+                self._callbacks.printOutput("Extracted base URL: " + final_url)
+                return final_url
                 
+        self._callbacks.printOutput("Using source URL base: " + base)
         return base
         
     def _updateSpecInfo(self):
@@ -1236,6 +1801,21 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         elif "securityDefinitions" in self.swagger_spec:
             schemes = self.swagger_spec["securityDefinitions"].keys()
             info.append("Security Schemes: " + ", ".join(schemes))
+        
+        # Tags
+        if "tags" in self.swagger_spec:
+            tags = [tag.get("name", "") for tag in self.swagger_spec["tags"]]
+            info.append("Tags: " + ", ".join(tags))
+        
+        # Global consumes/produces
+        if "consumes" in self.swagger_spec:
+            info.append("Global Consumes: " + ", ".join(self.swagger_spec["consumes"]))
+        if "produces" in self.swagger_spec:
+            info.append("Global Produces: " + ", ".join(self.swagger_spec["produces"]))
+        
+        # Definitions count
+        if "definitions" in self.swagger_spec:
+            info.append("Definitions: " + str(len(self.swagger_spec["definitions"])) + " schemas")
             
         self._specInfoArea.setText("\n".join(info))
         
@@ -1246,31 +1826,46 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         self._endpointListModel.clear()
         
         if not self.swagger_spec or "paths" not in self.swagger_spec:
+            self._callbacks.printOutput("No swagger spec or paths found")
             return
             
         paths = self.swagger_spec["paths"]
+        self._callbacks.printOutput("Found " + str(len(paths)) + " paths in swagger spec")
         
         for path, methods in paths.items():
+            self._callbacks.printOutput("Processing path: " + str(path))
             if not isinstance(methods, dict):
+                self._callbacks.printOutput("Path methods is not a dict: " + str(type(methods)))
                 continue
+            
+            # Check for path-level parameters
+            path_parameters = methods.get("parameters", [])
+            if path_parameters:
+                self._callbacks.printOutput("Found " + str(len(path_parameters)) + " path-level parameters for path: " + path)
                 
             for method, details in methods.items():
+                self._callbacks.printOutput("Processing method: " + str(method))
                 if method.upper() not in ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]:
+                    self._callbacks.printOutput("Skipping non-HTTP method: " + str(method))
                     continue
                     
                 endpoint = {
                     "path": path,
                     "method": method.upper(),
                     "details": details,
-                    "description": details.get("summary", details.get("description", ""))
+                    "path_parameters": path_parameters,  # Store path-level parameters
+                    "description": details.get("summary", details.get("description", "")),
+                    "tags": details.get("tags", [])  # Store endpoint tags
                 }
                 
                 self.endpoints.append(endpoint)
                 
                 # Add to table
+                tags_text = ", ".join(endpoint["tags"]) if endpoint["tags"] else ""
                 self._endpointsTableModel.addRow([
                     endpoint["method"],
                     endpoint["path"],
+                    tags_text,
                     endpoint["description"][:100]
                 ])
                 
@@ -1289,6 +1884,21 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                 self._endpointCountLabel.setText("1 endpoint loaded")
             else:
                 self._endpointCountLabel.setText(str(count) + " endpoints loaded")
+        
+        # Force UI updates
+        self._callbacks.printOutput("Parsing complete. Endpoints: " + str(len(self.endpoints)) + ", List size: " + str(self._endpointListModel.getSize()))
+        
+        # Force the list to repaint
+        if hasattr(self, '_endpointList'):
+            self._endpointList.revalidate()
+            self._endpointList.repaint()
+            self._callbacks.printOutput("Forced endpoint list repaint")
+        
+        # Initialize filtered endpoints to show all endpoints
+        self._filtered_endpoints = self.endpoints
+        
+        # Populate tag filter
+        self._populateTagFilter()
     
     def _refreshEndpointList(self, event):
         """Refresh the endpoint list display"""
@@ -1341,6 +1951,58 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             JOptionPane.showMessageDialog(self._mainPanel,
                 "Error in debug: " + str(e),
                 "Debug Error", JOptionPane.ERROR_MESSAGE)
+    
+    def _addTestEndpoint(self, event):
+        """Add a test endpoint to verify list functionality"""
+        try:
+            # Create a test endpoint
+            test_endpoint = {
+                "path": "/test/endpoint",
+                "method": "GET",
+                "details": {
+                    "summary": "Test endpoint for debugging",
+                    "parameters": []
+                },
+                "description": "Test endpoint for debugging"
+            }
+            
+            # Add to endpoints array
+            self.endpoints.append(test_endpoint)
+            
+            # Add to table
+            self._endpointsTableModel.addRow([
+                test_endpoint["method"],
+                test_endpoint["path"],
+                test_endpoint["description"][:100]
+            ])
+            
+            # Add to list
+            endpoint_text = test_endpoint["method"] + " " + test_endpoint["path"]
+            self._endpointListModel.addElement(endpoint_text)
+            
+            # Update count label
+            if hasattr(self, '_endpointCountLabel'):
+                count = len(self.endpoints)
+                if count == 0:
+                    self._endpointCountLabel.setText("No endpoints loaded")
+                elif count == 1:
+                    self._endpointCountLabel.setText("1 endpoint loaded")
+                else:
+                    self._endpointCountLabel.setText(str(count) + " endpoints loaded")
+            
+            # Force UI updates
+            self._endpointList.revalidate()
+            self._endpointList.repaint()
+            
+            self._callbacks.printOutput("Added test endpoint: " + endpoint_text)
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "Test endpoint added successfully!",
+                "Success", JOptionPane.INFORMATION_MESSAGE)
+                
+        except Exception as e:
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "Error adding test endpoint: " + str(e),
+                "Error", JOptionPane.ERROR_MESSAGE)
                 
     def _loadFromFile(self, event):
         """Load Swagger spec from file"""
@@ -1359,13 +2021,153 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                 JOptionPane.showMessageDialog(self._mainPanel,
                     "Error loading file: " + str(e), 
                     "Error", JOptionPane.ERROR_MESSAGE)
+    
+    def _testParser(self, event):
+        """Test the parser with the test Swagger file"""
+        try:
+            # Try to load the test file
+            test_file_path = "test_swagger.json"
+            if os.path.exists(test_file_path):
+                with open(test_file_path, 'r') as f:
+                    content = f.read()
+                
+                self._callbacks.printOutput("Testing parser with test_swagger.json...")
+                self._parseSwaggerSpec(content, "file://" + os.path.abspath(test_file_path))
+                
+                # Test comprehensive example generation for a specific endpoint
+                self._testComprehensiveExample()
+                
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "Test completed! Check the console for debug output.",
+                    "Test Complete", JOptionPane.INFORMATION_MESSAGE)
+            else:
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "Test file 'test_swagger.json' not found in the extension directory.",
+                    "Test File Not Found", JOptionPane.WARNING_MESSAGE)
                     
+        except Exception as e:
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "Test failed: " + str(e), 
+                "Test Error", JOptionPane.ERROR_MESSAGE)
+    
+    def _testComprehensiveExample(self):
+        """Test comprehensive example generation for a specific endpoint"""
+        try:
+            # Find an endpoint with a body parameter
+            for endpoint in self.endpoints:
+                if endpoint["method"] in ["POST", "PUT", "PATCH"]:
+                    details = endpoint["details"]
+                    parameters = details.get("parameters", [])
+                    
+                    for param in parameters:
+                        if param.get("in") == "body" and "schema" in param:
+                            self._callbacks.printOutput("Testing comprehensive example for: " + endpoint["method"] + " " + endpoint["path"])
+                            
+                            # Generate comprehensive example
+                            comprehensive_example = self._generateComprehensiveExample(param["schema"])
+                            basic_example = self._generateExample(param["schema"])
+                            
+                            self._callbacks.printOutput("Basic example properties: " + str(len(basic_example)) if isinstance(basic_example, dict) else "Basic example: " + str(type(basic_example)))
+                            self._callbacks.printOutput("Comprehensive example properties: " + str(len(comprehensive_example)) if isinstance(comprehensive_example, dict) else "Comprehensive example: " + str(type(comprehensive_example)))
+                            
+                            if isinstance(comprehensive_example, dict):
+                                self._callbacks.printOutput("Comprehensive example keys: " + ", ".join(comprehensive_example.keys()))
+                            
+                            # Only test the first one
+                            return
+                            
+        except Exception as e:
+            self._callbacks.printOutput("Error testing comprehensive example: " + str(e))
+    
+    def _testCurrentEndpointComprehensive(self, event):
+        """Test comprehensive example generation for the currently selected endpoint"""
+        try:
+            if not hasattr(self, 'current_endpoint') or not self.current_endpoint:
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "No endpoint selected. Please select an endpoint first.",
+                    "No Endpoint Selected", JOptionPane.WARNING_MESSAGE)
+                return
+            
+            endpoint = self.current_endpoint
+            self._callbacks.printOutput("Testing comprehensive example for: " + endpoint["method"] + " " + endpoint["path"])
+            
+            details = endpoint["details"]
+            parameters = details.get("parameters", [])
+            
+            # Find body parameter
+            body_param = None
+            for param in parameters:
+                if param.get("in") == "body" and "schema" in param:
+                    body_param = param
+                    break
+            
+            if not body_param:
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "No body parameter found for this endpoint.",
+                    "No Body Parameter", JOptionPane.INFORMATION_MESSAGE)
+                return
+            
+            # Generate both examples
+            basic_example = self._generateExample(body_param["schema"])
+            comprehensive_example = self._generateComprehensiveExample(body_param["schema"])
+            
+            # Show results
+            basic_props = len(basic_example) if isinstance(basic_example, dict) else "N/A"
+            comprehensive_props = len(comprehensive_example) if isinstance(comprehensive_example, dict) else "N/A"
+            
+            result_msg = "Endpoint: " + endpoint["method"] + " " + endpoint["path"] + "\n\n"
+            result_msg += "Basic example properties: " + str(basic_props) + "\n"
+            result_msg += "Comprehensive example properties: " + str(comprehensive_props) + "\n\n"
+            
+            if isinstance(comprehensive_example, dict):
+                result_msg += "Comprehensive example keys:\n"
+                result_msg += ", ".join(comprehensive_example.keys())
+                
+                # Show first few values
+                result_msg += "\n\nSample values:\n"
+                count = 0
+                for key, value in comprehensive_example.items():
+                    if count >= 5:  # Limit to first 5
+                        break
+                    result_msg += key + ": " + str(value)[:50] + "\n"
+                    count += 1
+                
+                if len(comprehensive_example) > 5:
+                    result_msg += "... and " + str(len(comprehensive_example) - 5) + " more properties"
+            
+            JOptionPane.showMessageDialog(self._mainPanel,
+                result_msg,
+                "Comprehensive Example Test", JOptionPane.INFORMATION_MESSAGE)
+                
+        except Exception as e:
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "Error testing comprehensive example: " + str(e),
+                "Error", JOptionPane.ERROR_MESSAGE)
+                    
+    def _createListSelectionListener(self):
+        """Create a list selection listener for the endpoint list"""
+        class EndpointListSelectionListener(ListSelectionListener):
+            def __init__(self, extender):
+                self.extender = extender
+            
+            def valueChanged(self, event):
+                if not event.getValueIsAdjusting():
+                    self.extender._selectEndpoint()
+        
+        return EndpointListSelectionListener(self)
+    
     def _selectEndpoint(self):
         """Handle endpoint selection"""
         selected = self._endpointList.getSelectedIndex()
-        if selected >= 0 and selected < len(self.endpoints):
-            self.current_endpoint = self.endpoints[selected]
+        
+        # Use filtered endpoints if available, otherwise use all endpoints
+        endpoints_to_use = getattr(self, '_filtered_endpoints', self.endpoints)
+        
+        if selected >= 0 and selected < len(endpoints_to_use):
+            self.current_endpoint = endpoints_to_use[selected]
             self._loadEndpointDetails()
+        else:
+            self._callbacks.printOutput("Invalid selection index: " + str(selected) + " (max: " + str(len(endpoints_to_use) - 1) + ")")
             
     def _loadEndpointDetails(self):
         """Load selected endpoint details into request editor"""
@@ -1378,7 +2180,36 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         # Get endpoint details
         path = self.current_endpoint["path"]
         details = self.current_endpoint["details"]
-        parameters = details.get("parameters", [])
+        
+        # Get path-level parameters (Swagger 2.0)
+        path_parameters = self.current_endpoint.get("path_parameters", [])
+        if path_parameters:
+            self._callbacks.printOutput("Found " + str(len(path_parameters)) + " path-level parameters from stored endpoint")
+        
+        # Get method-level parameters
+        method_parameters = details.get("parameters", [])
+        self._callbacks.printOutput("Found " + str(len(method_parameters)) + " method-level parameters")
+        
+        # Merge parameters (method-level override path-level)
+        # Create a map to handle duplicates - method-level takes precedence
+        param_map = {}
+        
+        # Add path parameters first
+        for param in path_parameters:
+            param_name = param.get("name", "")
+            if param_name:
+                param_map[param_name] = param
+                self._callbacks.printOutput("Added path parameter: " + param_name)
+        
+        # Override with method parameters
+        for param in method_parameters:
+            param_name = param.get("name", "")
+            if param_name:
+                param_map[param_name] = param
+                self._callbacks.printOutput("Added method parameter: " + param_name)
+        
+        all_parameters = param_map.values()
+        self._callbacks.printOutput("Total merged parameters: " + str(len(all_parameters)))
         
         # Clear parameter tables
         self._pathParamsTableModel.setRowCount(0)
@@ -1387,7 +2218,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         self._requestHeadersTableModel.setRowCount(0)
         
         # Parse parameters from the spec
-        self._parseEndpointParameters(parameters, details)
+        self._parseEndpointParameters(all_parameters, details)
         
         # Build initial URL
         self._updateRequestFromParams()
@@ -1408,15 +2239,43 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         
         # Load headers from spec
         self._refreshHeadersFromSpec()
+        
+        # Update body panel visibility based on this endpoint's actual parameters
+        self._updateBodyPanelVisibility()
+    
+    def _populateTagFilter(self):
+        """Populate the tag filter with available tags"""
+        if not hasattr(self, '_tagFilterCombo'):
+            return
+            
+        # Collect all unique tags
+        all_tags = set()
+        for endpoint in self.endpoints:
+            tags = endpoint.get("tags", [])
+            all_tags.update(tags)
+        
+        # Update tag filter combo
+        self._tagFilterCombo.removeAllItems()
+        self._tagFilterCombo.addItem("All")
+        
+        # Add tags in alphabetical order
+        for tag in sorted(all_tags):
+            self._tagFilterCombo.addItem(tag)
+        
+        self._callbacks.printOutput("Populated tag filter with " + str(len(all_tags)) + " tags")
     
     def _parseEndpointParameters(self, parameters, details):
         """Parse parameters from endpoint definition"""
+        self._callbacks.printOutput("Parsing " + str(len(parameters)) + " parameters")
+        
         for param in parameters:
             name = param.get("name", "")
             param_type = param.get("type", "string")
             required = param.get("required", False)
             description = param.get("description", "")
             param_in = param.get("in", "")
+            
+            self._callbacks.printOutput("Processing parameter: " + name + " (in: " + param_in + ", type: " + param_type + ")")
             
             # Handle schema-based parameters (OpenAPI 3.0)
             if "schema" in param:
@@ -1433,18 +2292,100 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             # Add to appropriate table
             if param_in == "path":
                 self._pathParamsTableModel.addRow([name, example_value, param_type, str(required), description])
+                self._callbacks.printOutput("Added path parameter to table: " + name)
             elif param_in == "query":
                 self._queryParamsTableModel.addRow([name, example_value, param_type, str(required), description])
+                self._callbacks.printOutput("Added query parameter to table: " + name)
             elif param_in == "header":
                 self._headerParamsTableModel.addRow([name, example_value, param_type, str(required), description])
+                self._callbacks.printOutput("Added header parameter to table: " + name)
         
         # Also check for additional headers in the endpoint definition
         if "responses" in details:
+            self._callbacks.printOutput("Found responses section with " + str(len(details["responses"])) + " response codes")
             for response_code, response_data in details["responses"].items():
+                self._callbacks.printOutput("Processing response code: " + str(response_code))
                 if "headers" in response_data:
+                    self._callbacks.printOutput("Found " + str(len(response_data["headers"])) + " response headers")
                     for header_name, header_data in response_data["headers"].items():
                         # These are response headers, but useful to know about
-                        pass
+                        # Add them to the header params table for reference
+                        header_type = "response_header"
+                        header_desc = "Response header: " + str(response_data.get("description", ""))
+                        self._headerParamsTableModel.addRow([header_name, "", header_type, "false", header_desc])
+                        self._callbacks.printOutput("Added response header: " + header_name)
+        
+        # Check for non-standard responsesObject (some Swagger specs have this)
+        if "responsesObject" in details:
+            self._callbacks.printOutput("Found non-standard responsesObject with " + str(len(details["responsesObject"])) + " response codes")
+            for response_code, response_data in details["responsesObject"].items():
+                self._callbacks.printOutput("Processing responsesObject code: " + str(response_code))
+                if "headers" in response_data:
+                    self._callbacks.printOutput("Found " + str(len(response_data["headers"])) + " responsesObject headers")
+                    for header_name, header_data in response_data["headers"].items():
+                        # Add these headers as well
+                        header_type = "response_header"
+                        header_desc = "Response header (responsesObject): " + str(response_data.get("description", ""))
+                        self._headerParamsTableModel.addRow([header_name, "", header_type, "false", header_desc])
+                        self._callbacks.printOutput("Added responsesObject header: " + header_name)
+    
+    def _extractParametersFromResponses(self, details):
+        """Extract additional parameters from response schemas for comprehensive coverage"""
+        additional_params = []
+        
+        if "responses" in details:
+            for response_code, response_data in details["responses"].items():
+                if response_code.startswith("2"):  # Success responses
+                    # Extract from schema
+                    if "schema" in response_data:
+                        schema_params = self._extractParametersFromSchema(response_data["schema"])
+                        additional_params.extend(schema_params)
+                    
+                    # Extract from responseSchema (non-standard field)
+                    if "responseSchema" in response_data:
+                        schema_params = self._extractParametersFromSchema(response_data["responseSchema"])
+                        additional_params.extend(schema_params)
+        
+        # Also check responsesObject
+        if "responsesObject" in details:
+            for response_code, response_data in details["responsesObject"].items():
+                if response_code.startswith("2"):  # Success responses
+                    if "schema" in response_data:
+                        schema_params = self._extractParametersFromSchema(response_data["schema"])
+                        additional_params.extend(schema_params)
+                    
+                    if "responseSchema" in response_data:
+                        schema_params = self._extractParametersFromSchema(response_data["responseSchema"])
+                        additional_params.extend(schema_params)
+        
+        return additional_params
+    
+    def _extractParametersFromSchema(self, schema):
+        """Extract parameters from a schema definition"""
+        params = []
+        
+        if "$ref" in schema:
+            resolved_schema = self._resolveSchemaReference(schema["$ref"])
+            if resolved_schema:
+                return self._extractParametersFromSchema(resolved_schema)
+            return params
+        
+        if schema.get("type") == "object" and "properties" in schema:
+            properties = schema["properties"]
+            required = schema.get("required", [])
+            
+            for prop_name, prop_schema in properties.items():
+                param = {
+                    "name": prop_name,
+                    "type": prop_schema.get("type", "string"),
+                    "required": prop_name in required,
+                    "description": prop_schema.get("description", ""),
+                    "in": "body",  # These are body parameters
+                    "schema": prop_schema
+                }
+                params.append(param)
+        
+        return params
     
     def _generateParamExampleValue(self, param):
         """Generate example value for parameter"""
@@ -1500,13 +2441,26 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             return param.get("name", "value")
                 
     def _buildRequestBody(self, details):
-        """Build example request body from endpoint details"""
+        """Build comprehensive example request body from endpoint details"""
         if "requestBody" not in details:
             # Check for body parameters (Swagger 2.0)
             parameters = details.get("parameters", [])
             for param in parameters:
                 if param.get("in") == "body" and "schema" in param:
+                    self._callbacks.printOutput("Building request body from Swagger 2.0 body parameter: " + param.get("name", "unnamed"))
                     return self._schemaToExample(param["schema"])
+            
+            # If no body parameter found, try to build from response schema (for testing purposes)
+            if "responses" in details:
+                for response_code, response_data in details["responses"].items():
+                    if response_code.startswith("2"):  # Success responses
+                        if "schema" in response_data:
+                            self._callbacks.printOutput("Building request body from response schema for testing")
+                            return self._schemaToExample(response_data["schema"])
+                        elif "responseSchema" in response_data:
+                            self._callbacks.printOutput("Building request body from responseSchema for testing")
+                            return self._schemaToExample(response_data["responseSchema"])
+            
             return ""
             
         # OpenAPI 3.0 requestBody
@@ -1533,10 +2487,17 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
     def _schemaToExample(self, schema):
         """Convert JSON schema to example"""
         try:
-            example = self._generateExample(schema)
+            # Use the comprehensive example generator for better coverage
+            example = self._generateComprehensiveExample(schema)
             return json.dumps(example, indent=2)
-        except:
-            return "{}"
+        except Exception as e:
+            self._callbacks.printOutput("Error in _schemaToExample: " + str(e))
+            # Fallback to basic example generator
+            try:
+                example = self._generateExample(schema)
+                return json.dumps(example, indent=2)
+            except:
+                return "{}"
             
     def _generateExample(self, schema):
         """Generate example from schema with enhanced type handling"""
@@ -1650,6 +2611,152 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             return True
             
         return None
+    
+    def _resolveSchemaReference(self, ref_path):
+        """Resolve schema references with full path support"""
+        if not ref_path.startswith("#/"):
+            return None
+            
+        try:
+            # Split the reference path
+            path_parts = ref_path.split("/")[1:]  # Remove the # and split
+            current = self.swagger_spec
+            
+            # Navigate through the path
+            for part in path_parts:
+                if isinstance(current, dict) and part in current:
+                    current = current[part]
+                else:
+                    return None
+            
+            return current
+        except Exception as e:
+            self._callbacks.printOutput("Error resolving schema reference " + ref_path + ": " + str(e))
+            return None
+        
+    def _generateComprehensiveExample(self, schema, depth=0):
+        """Generate comprehensive example from schema with enhanced type handling and full reference resolution"""
+        # Prevent infinite recursion
+        if depth > 10:
+            return "max_depth_exceeded"
+        
+        if "example" in schema:
+            return schema["example"]
+        
+        # Handle references with full resolution
+        if "$ref" in schema and self.swagger_spec:
+            resolved_schema = self._resolveSchemaReference(schema["$ref"])
+            if resolved_schema:
+                return self._generateComprehensiveExample(resolved_schema, depth + 1)
+            else:
+                return "unresolved_reference"
+        
+        if "type" not in schema:
+            # Handle allOf, oneOf, anyOf with full property merging
+            if "allOf" in schema:
+                merged = {}
+                for sub_schema in schema["allOf"]:
+                    example = self._generateComprehensiveExample(sub_schema, depth + 1)
+                    if isinstance(example, dict):
+                        merged.update(example)
+                return merged
+            elif "oneOf" in schema and schema["oneOf"]:
+                return self._generateComprehensiveExample(schema["oneOf"][0], depth + 1)
+            elif "anyOf" in schema and schema["anyOf"]:
+                return self._generateComprehensiveExample(schema["anyOf"][0], depth + 1)
+            return {}
+            
+        schema_type = schema["type"]
+        
+        if schema_type == "object":
+            obj = {}
+            properties = schema.get("properties", {})
+            required = schema.get("required", [])
+            
+            # Generate examples for ALL properties (not just required ones)
+            # This matches Postman's comprehensive approach
+            for prop_name, prop_schema in properties.items():
+                try:
+                    obj[prop_name] = self._generateComprehensiveExample(prop_schema, depth + 1)
+                except Exception as e:
+                    obj[prop_name] = "error_generating_" + prop_name
+            
+            return obj
+            
+        elif schema_type == "array":
+            items = schema.get("items", {})
+            min_items = schema.get("minItems", 1)
+            max_items = min(schema.get("maxItems", 3), 3)  # Limit array size
+            
+            examples = []
+            for i in range(max(min_items, 1)):
+                if i < max_items:
+                    examples.append(self._generateComprehensiveExample(items, depth + 1))
+            return examples
+            
+        elif schema_type == "string":
+            if "enum" in schema:
+                return schema["enum"][0]
+            elif "format" in schema:
+                format_type = schema["format"]
+                if format_type == "date":
+                    return "2024-01-01"
+                elif format_type == "date-time":
+                    return "2024-01-01T00:00:00Z"
+                elif format_type == "email":
+                    return "user@example.com"
+                elif format_type == "uuid":
+                    return "550e8400-e29b-41d4-a716-446655440000"
+                elif format_type == "password":
+                    return "password123"
+                elif format_type == "uri":
+                    return "https://example.com"
+                elif format_type == "binary":
+                    return "base64encodeddata"
+                elif format_type == "byte":
+                    return "base64encodeddata"
+            
+            # Handle string constraints
+            min_length = schema.get("minLength", 0)
+            max_length = schema.get("maxLength", 50)
+            
+            # Generate more realistic examples based on field names
+            field_name = schema.get("name", "example_string")
+            if "name" in field_name.lower():
+                base_value = "Service Name"
+            elif "description" in field_name.lower():
+                base_value = "Service description"
+            elif "url" in field_name.lower():
+                base_value = "https://api.example.com/endpoint"
+            elif "code" in field_name.lower():
+                base_value = "CODE123"
+            elif "id" in field_name.lower():
+                base_value = "12345"
+            else:
+                base_value = "string"
+            
+            # Apply length constraints
+            if len(base_value) < min_length:
+                base_value = base_value * ((min_length // len(base_value)) + 1)
+            if len(base_value) > max_length:
+                base_value = base_value[:max_length]
+            
+            return base_value
+            
+        elif schema_type == "number":
+            minimum = schema.get("minimum", 0)
+            maximum = schema.get("maximum", 100)
+            return float(minimum + (maximum - minimum) / 2)
+            
+        elif schema_type == "integer":
+            minimum = schema.get("minimum", 0)
+            maximum = schema.get("maximum", 100)
+            return int(minimum + (maximum - minimum) / 2)
+            
+        elif schema_type == "boolean":
+            return True
+            
+        return None
         
     def _schemaToXmlExample(self, schema):
         """Convert schema to XML example"""
@@ -1689,8 +2796,18 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             headers.append(method + " " + urlparse(url).path + " HTTP/1.1")
             headers.append("Host: " + urlparse(url).netloc)
             
-            # Add content type
-            if method in ["POST", "PUT", "PATCH"] and content_type:
+            # Check if this method actually has body parameters
+            has_body_param = False
+            if self.current_endpoint:
+                details = self.current_endpoint["details"]
+                parameters = details.get("parameters", [])
+                for param in parameters:
+                    if param.get("in") == "body":
+                        has_body_param = True
+                        break
+            
+            # Add content type (only for methods that support request bodies AND have body parameters)
+            if method in ["POST", "PUT", "PATCH", "DELETE"] and has_body_param and content_type:
                 headers.append("Content-Type: " + content_type)
                 
             # Add headers from the request headers table (includes spec, auth, global, and manual headers)
@@ -1705,12 +2822,18 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                 headers.append("User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36")
                 headers.append("Accept: */*")
                 
-            # Build full request
-            if body and method in ["POST", "PUT", "PATCH"]:
+            # Build full request (only add body for methods that support it AND have body parameters)
+            if body and method in ["POST", "PUT", "PATCH", "DELETE"] and has_body_param:
                 headers.append("Content-Length: " + str(len(body)))
                 full_request = "\r\n".join(headers) + "\r\n\r\n" + body
+                self._callbacks.printOutput("Adding body to " + method + " request (has body parameter)")
             else:
+                # No body - either method doesn't support bodies or has no body parameter
                 full_request = "\r\n".join(headers) + "\r\n\r\n"
+                if not has_body_param:
+                    self._callbacks.printOutput("No body added to " + method + " request (no body parameter defined)")
+                else:
+                    self._callbacks.printOutput("No body added to " + method + " request (method doesn't support bodies)")
                 
             # Convert to bytes
             request_bytes = self._helpers.stringToBytes(full_request)
@@ -1852,24 +2975,653 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         JOptionPane.showMessageDialog(self._mainPanel,
             auth_message, 
             "Success", JOptionPane.INFORMATION_MESSAGE)
+    
+    def _addAuthProfile(self, event):
+        """Add a new authentication profile"""
+        auth_type = str(self._authTypeCombo.getSelectedItem())
+        profile_name = self._profileNameField.getText().strip()
+        
+        if not profile_name:
+            JOptionPane.showMessageDialog(self._mainPanel, "Please enter a profile name", "Error", JOptionPane.ERROR_MESSAGE)
+            return
+        
+        if auth_type == "None":
+            JOptionPane.showMessageDialog(self._mainPanel, "Please select an authentication type", "Error", JOptionPane.ERROR_MESSAGE)
+            return
+        
+        # Create auth profile
+        auth_profile = {
+            "name": profile_name,
+            "type": auth_type,
+            "key": self._authKeyField.getText().strip(),
+            "value": self._authValueField.getText().strip()
+        }
+        
+        # Initialize auth profiles if not exists
+        if not hasattr(self, 'auth_profiles'):
+            self.auth_profiles = []
+        
+        # Check if profile name already exists
+        for profile in self.auth_profiles:
+            if profile["name"] == profile_name:
+                JOptionPane.showMessageDialog(self._mainPanel, "Profile name already exists", "Error", JOptionPane.ERROR_MESSAGE)
+                return
+        
+        # Add profile
+        self.auth_profiles.append(auth_profile)
+        
+        # Add to table
+        self._addAuthProfileToTable(auth_profile)
+        
+        # Clear fields
+        self._profileNameField.setText("")
+        self._authKeyField.setText("")
+        self._authValueField.setText("")
+        
+        JOptionPane.showMessageDialog(self._mainPanel, 
+            "Authentication profile '" + profile_name + "' added successfully", 
+            "Success", JOptionPane.INFORMATION_MESSAGE)
+    
+    def _addAuthProfileToTable(self, profile):
+        """Add an authentication profile to the table"""
+        # Create action buttons for the Actions column
+        actions_panel = JPanel(FlowLayout(FlowLayout.CENTER, 2, 2))
+        
+        # Apply button
+        apply_btn = JButton("Apply", actionPerformed=lambda e, p=profile: self._applyAuthProfile(p))
+        apply_btn.setPreferredSize(Dimension(50, 20))
+        apply_btn.setBackground(Color(60, 120, 60))
+        apply_btn.setForeground(Color.WHITE)
+        
+        # Edit button
+        edit_btn = JButton("Edit", actionPerformed=lambda e, p=profile: self._editAuthProfileFromTable(p))
+        edit_btn.setPreferredSize(Dimension(50, 20))
+        edit_btn.setBackground(Color(60, 60, 120))
+        edit_btn.setForeground(Color.WHITE)
+        
+        actions_panel.add(apply_btn)
+        actions_panel.add(edit_btn)
+        
+        # Add row to table
+        self._authTableModel.addRow([
+            profile["name"],
+            profile["type"],
+            profile["key"],
+            profile["value"],
+            actions_panel
+        ])
+    
+    def _applyAuthProfile(self, profile):
+        """Apply a specific authentication profile"""
+        auth_type = profile["type"]
+        self.auth_headers = {}
+        
+        if auth_type == "Bearer Token":
+            token = profile["value"]
+            if token:
+                self.auth_headers["Authorization"] = "Bearer " + token
+                
+        elif auth_type == "API Key":
+            header_name = profile["key"]
+            api_key = profile["value"]
+            if header_name and api_key:
+                self.auth_headers[header_name] = api_key
+                
+        elif auth_type == "Basic Auth":
+            username = profile["key"]
+            password = profile["value"]
+            if username and password:
+                credentials = username + ":" + password
+                encoded = base64.b64encode(credentials.encode('utf-8')).decode('utf-8')
+                self.auth_headers["Authorization"] = "Basic " + encoded
+                
+        elif auth_type == "Custom Header":
+            header_name = profile["key"]
+            header_value = profile["value"]
+            if header_name and header_value:
+                self.auth_headers[header_name] = header_value
+        
+        # Refresh headers to show the updated authentication
+        self._refreshHeadersFromSpec()
+        
+        JOptionPane.showMessageDialog(self._mainPanel,
+            "Authentication profile '" + profile["name"] + "' applied successfully", 
+            "Success", JOptionPane.INFORMATION_MESSAGE)
+    
+    def _editAuthProfileFromTable(self, profile):
+        """Edit an authentication profile from the table"""
+        # Populate fields with current values
+        self._authTypeCombo.setSelectedItem(profile["type"])
+        self._profileNameField.setText(profile["name"])
+        self._authKeyField.setText(profile["key"])
+        self._authValueField.setText(profile["value"])
+        
+        # Change button text
+        if hasattr(self, '_addAuthButton'):
+            self._addAuthButton.setText("Update Profile")
+        
+        # Store profile being edited
+        self._editingProfile = profile
+    
+    def _editAuthProfile(self, event):
+        """Edit selected authentication profile"""
+        selected = self._authTable.getSelectedRow()
+        if selected < 0:
+            JOptionPane.showMessageDialog(self._mainPanel, "Please select a profile to edit", "Info", JOptionPane.INFORMATION_MESSAGE)
+            return
+        
+        # Get profile from table
+        profile_name = self._authTableModel.getValueAt(selected, 0)
+        profile = None
+        for p in self.auth_profiles:
+            if p["name"] == profile_name:
+                profile = p
+                break
+        
+        if profile:
+            self._editAuthProfileFromTable(profile)
+        else:
+            JOptionPane.showMessageDialog(self._mainPanel, "Profile not found", "Error", JOptionPane.ERROR_MESSAGE)
+    
+    def _deleteAuthProfile(self, event):
+        """Delete selected authentication profile"""
+        selected = self._authTable.getSelectedRow()
+        if selected < 0:
+            JOptionPane.showMessageDialog(self._mainPanel, "Please select a profile to delete", "Info", JOptionPane.INFORMATION_MESSAGE)
+            return
+        
+        profile_name = self._authTableModel.getValueAt(selected, 0)
+        
+        # Confirm deletion
+        result = JOptionPane.showConfirmDialog(self._mainPanel,
+            "Are you sure you want to delete profile '" + profile_name + "'?",
+            "Confirm Deletion", JOptionPane.YES_NO_OPTION)
+        
+        if result == JOptionPane.YES_OPTION:
+            # Remove from profiles list
+            self.auth_profiles = [p for p in self.auth_profiles if p["name"] != profile_name]
+            
+            # Remove from table
+            self._authTableModel.removeRow(selected)
+            
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "Profile '" + profile_name + "' deleted successfully", 
+                "Success", JOptionPane.INFORMATION_MESSAGE)
+    
+    def _applySelectedAuth(self, event):
+        """Apply the selected authentication profile"""
+        selected = self._authTable.getSelectedRow()
+        if selected < 0:
+            JOptionPane.showMessageDialog(self._mainPanel, "Please select a profile to apply", "Info", JOptionPane.INFORMATION_MESSAGE)
+            return
+        
+        profile_name = self._authTableModel.getValueAt(selected, 0)
+        profile = None
+        for p in self.auth_profiles:
+            if p["name"] == profile_name:
+                profile = p
+                break
+        
+        if profile:
+            self._applyAuthProfile(profile)
+        else:
+            JOptionPane.showMessageDialog(self._mainPanel, "Profile not found", "Error", JOptionPane.ERROR_MESSAGE)
+    
+    def _clearAllAuth(self, event):
+        """Clear all authentication profiles"""
+        if not hasattr(self, 'auth_profiles') or not self.auth_profiles:
+            JOptionPane.showMessageDialog(self._mainPanel, "No profiles to clear", "Info", JOptionPane.INFORMATION_MESSAGE)
+            return
+        
+        result = JOptionPane.showConfirmDialog(self._mainPanel,
+            "Are you sure you want to clear all authentication profiles?",
+            "Confirm Clear All", JOptionPane.YES_NO_OPTION)
+        
+        if result == JOptionPane.YES_OPTION:
+            self.auth_profiles = []
+            self._authTableModel.setRowCount(0)
+            self.auth_headers = {}
+            self._refreshHeadersFromSpec()
+            
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "All authentication profiles cleared successfully", 
+                "Success", JOptionPane.INFORMATION_MESSAGE)
+    
+    def _saveAuthProfiles(self, event):
+        """Save authentication profiles to a file"""
+        if not hasattr(self, 'auth_profiles') or not self.auth_profiles:
+            JOptionPane.showMessageDialog(self._mainPanel, "No profiles to save", "Info", JOptionPane.INFORMATION_MESSAGE)
+            return
+        
+        # Create file chooser
+        file_chooser = JFileChooser()
+        file_chooser.setDialogTitle("Save Authentication Profiles")
+        file_chooser.setFileSelectionMode(JFileChooser.FILES_ONLY)
+        file_chooser.setSelectedFile(JavaFile("auth_profiles.json"))
+        
+        result = file_chooser.showSaveDialog(self._mainPanel)
+        if result == JFileChooser.APPROVE_OPTION:
+            try:
+                file_path = file_chooser.getSelectedFile().getAbsolutePath()
+                
+                # Save profiles to JSON file
+                with open(file_path, 'w') as f:
+                    json.dump(self.auth_profiles, f, indent=2)
+                
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "Authentication profiles saved to:\n" + file_path, 
+                    "Success", JOptionPane.INFORMATION_MESSAGE)
+                    
+            except Exception as e:
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "Error saving profiles: " + str(e), 
+                    "Error", JOptionPane.ERROR_MESSAGE)
+    
+    def _loadAuthProfiles(self, event):
+        """Load authentication profiles from a file"""
+        # Create file chooser
+        file_chooser = JFileChooser()
+        file_chooser.setDialogTitle("Load Authentication Profiles")
+        file_chooser.setFileSelectionMode(JFileChooser.FILES_ONLY)
+        file_chooser.setFileFilter(javax.swing.filechooser.FileNameExtensionFilter("JSON files", "json"))
+        
+        result = file_chooser.showOpenDialog(self._mainPanel)
+        if result == JFileChooser.APPROVE_OPTION:
+            try:
+                file_path = file_chooser.getSelectedFile().getAbsolutePath()
+                
+                # Load profiles from JSON file
+                with open(file_path, 'r') as f:
+                    loaded_profiles = json.load(f)
+                
+                # Validate profiles
+                if not isinstance(loaded_profiles, list):
+                    raise ValueError("Invalid file format: expected a list of profiles")
+                
+                # Clear existing profiles
+                self.auth_profiles = []
+                self._authTableModel.setRowCount(0)
+                
+                # Add loaded profiles
+                for profile in loaded_profiles:
+                    if isinstance(profile, dict) and 'name' in profile and 'type' in profile:
+                        self.auth_profiles.append(profile)
+                        self._addAuthProfileToTable(profile)
+                
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "Loaded " + str(len(loaded_profiles)) + " authentication profiles from:\n" + file_path, 
+                    "Success", JOptionPane.INFORMATION_MESSAGE)
+                    
+            except Exception as e:
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "Error loading profiles: " + str(e), 
+                    "Error", JOptionPane.ERROR_MESSAGE)
+    
+    def _createHeadersTableMouseListener(self):
+        """Create mouse listener for headers table to handle enabled column clicks"""
+        class HeadersTableMouseListener(MouseAdapter):
+            def __init__(self, extender):
+                self.extender = extender
+            
+            def mouseClicked(self, event):
+                # Check if click is on the Enabled column (column 3)
+                column = self.extender._headersTable.columnAtPoint(event.getPoint())
+                if column == 3:  # Enabled column
+                    row = self.extender._headersTable.rowAtPoint(event.getPoint())
+                    if row >= 0:
+                        # Toggle enabled status
+                        current_status = self.extender._headersTableModel.getValueAt(row, 3)
+                        new_status = "✗" if current_status == "✓" else "✓"
+                        
+                        # Update table
+                        self.extender._headersTableModel.setValueAt(new_status, row, 3)
+                        
+                        # Update stored header data
+                        header_name = self.extender._headersTableModel.getValueAt(row, 0)
+                        if hasattr(self.extender, 'custom_headers'):
+                            for header in self.extender.custom_headers:
+                                if header["name"] == header_name:
+                                    header["enabled"] = (new_status == "✓")
+                                    break
+                        
+                        # Refresh headers in API Tester tab
+                        self.extender._refreshHeadersFromSpec()
+                        
+                        # Show feedback
+                        status_text = "enabled" if new_status == "✓" else "disabled"
+                        self.extender._callbacks.printOutput("Header '" + header_name + "' " + status_text)
+        
+        return HeadersTableMouseListener(self)
             
     def _addHeader(self, event):
-        """Add custom header"""
-        name = JOptionPane.showInputDialog(self._mainPanel, "Header Name:")
-        if name:
-            value = JOptionPane.showInputDialog(self._mainPanel, "Header Value:")
-            if value:
-                self._headersTableModel.addRow([name, value])
+        """Add custom header with enhanced dialog"""
+        # Create custom dialog for header input
+        headerDialog = JPanel()
+        headerDialog.setLayout(GroupLayout(headerDialog))
+        headerLayout = GroupLayout(headerDialog)
+        headerDialog.setLayout(headerLayout)
+        headerLayout.setAutoCreateGaps(True)
+        headerLayout.setAutoCreateContainerGaps(True)
+        
+        # Header name field
+        nameLabel = JLabel("Header Name:")
+        nameField = JTextField(20)
+        nameField.setText("X-Custom-Header")
+        
+        # Header value field
+        valueLabel = JLabel("Header Value:")
+        valueField = JTextField(30)
+        valueField.setText("custom-value")
+        
+        # Description field
+        descLabel = JLabel("Description:")
+        descField = JTextField(25)
+        descField.setText("Custom header for all requests")
+        
+        # Enabled checkbox
+        enabledCheck = JCheckBox("Enabled", True)
+        
+        # Layout the dialog
+        headerLayout.setHorizontalGroup(
+            headerLayout.createParallelGroup()
+                .addGroup(headerLayout.createSequentialGroup()
+                    .addComponent(nameLabel)
+                    .addComponent(nameField))
+                .addGroup(headerLayout.createSequentialGroup()
+                    .addComponent(valueLabel)
+                    .addComponent(valueField))
+                .addGroup(headerLayout.createSequentialGroup()
+                    .addComponent(descLabel)
+                    .addComponent(descField))
+                .addComponent(enabledCheck)
+        )
+        
+        headerLayout.setVerticalGroup(
+            headerLayout.createSequentialGroup()
+                .addGroup(headerLayout.createParallelGroup(GroupLayout.Alignment.BASELINE)
+                    .addComponent(nameLabel)
+                    .addComponent(nameField))
+                .addGroup(headerLayout.createParallelGroup(GroupLayout.Alignment.BASELINE)
+                    .addComponent(valueLabel)
+                    .addComponent(valueField))
+                .addGroup(headerLayout.createParallelGroup(GroupLayout.Alignment.BASELINE)
+                    .addComponent(descLabel)
+                    .addComponent(descField))
+                .addComponent(enabledCheck)
+        )
+        
+        # Show dialog
+        result = JOptionPane.showConfirmDialog(self._mainPanel, headerDialog, 
+            "Add Custom Header", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE)
+        
+        if result == JOptionPane.OK_OPTION:
+            name = nameField.getText().strip()
+            value = valueField.getText().strip()
+            description = descField.getText().strip()
+            enabled = enabledCheck.isSelected()
+            
+            if name and value:
+                # Add to table
+                self._headersTableModel.addRow([name, value, description, "✓" if enabled else "✗"])
+                
+                # Store header data for later use
+                if not hasattr(self, 'custom_headers'):
+                    self.custom_headers = []
+                
+                header_data = {
+                    "name": name,
+                    "value": value,
+                    "description": description,
+                    "enabled": enabled
+                }
+                self.custom_headers.append(header_data)
+                
                 # Refresh headers in API Tester tab
                 self._refreshHeadersFromSpec()
                 
-    def _removeHeader(self, event):
-        """Remove selected header"""
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "Custom header '" + name + "' added successfully", 
+                    "Success", JOptionPane.INFORMATION_MESSAGE)
+            else:
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "Header name and value are required", 
+                    "Error", JOptionPane.ERROR_MESSAGE)
+    
+    def _editHeader(self, event):
+        """Edit selected custom header"""
         selected = self._headersTable.getSelectedRow()
-        if selected >= 0:
+        if selected < 0:
+            JOptionPane.showMessageDialog(self._mainPanel, "Please select a header to edit", "Info", JOptionPane.INFORMATION_MESSAGE)
+            return
+        
+        # Get current values
+        name = self._headersTableModel.getValueAt(selected, 0)
+        value = self._headersTableModel.getValueAt(selected, 1)
+        description = self._headersTableModel.getValueAt(selected, 2)
+        enabled = self._headersTableModel.getValueAt(selected, 3) == "✓"
+        
+        # Create edit dialog
+        headerDialog = JPanel()
+        headerDialog.setLayout(GroupLayout(headerDialog))
+        headerLayout = GroupLayout(headerDialog)
+        headerDialog.setLayout(headerLayout)
+        headerLayout.setAutoCreateGaps(True)
+        headerLayout.setAutoCreateContainerGaps(True)
+        
+        # Header name field
+        nameLabel = JLabel("Header Name:")
+        nameField = JTextField(20)
+        nameField.setText(name)
+        
+        # Header value field
+        valueLabel = JLabel("Header Value:")
+        valueField = JTextField(30)
+        valueField.setText(value)
+        
+        # Description field
+        descLabel = JLabel("Description:")
+        descField = JTextField(25)
+        descField.setText(description)
+        
+        # Enabled checkbox
+        enabledCheck = JCheckBox("Enabled", enabled)
+        
+        # Layout the dialog
+        headerLayout.setHorizontalGroup(
+            headerLayout.createParallelGroup()
+                .addGroup(headerLayout.createSequentialGroup()
+                    .addComponent(nameLabel)
+                    .addComponent(nameField))
+                .addGroup(headerLayout.createSequentialGroup()
+                    .addComponent(valueLabel)
+                    .addComponent(valueField))
+                .addGroup(headerLayout.createSequentialGroup()
+                    .addComponent(descLabel)
+                    .addComponent(descField))
+                .addComponent(enabledCheck)
+        )
+        
+        headerLayout.setVerticalGroup(
+            headerLayout.createSequentialGroup()
+                .addGroup(headerLayout.createParallelGroup(GroupLayout.Alignment.BASELINE)
+                    .addComponent(nameLabel)
+                    .addComponent(nameField))
+                .addGroup(headerLayout.createSequentialGroup()
+                    .addComponent(valueLabel)
+                    .addComponent(valueField))
+                .addGroup(headerLayout.createParallelGroup(GroupLayout.Alignment.BASELINE)
+                    .addComponent(descLabel)
+                    .addComponent(descField))
+                .addComponent(enabledCheck)
+        )
+        
+        # Show dialog
+        result = JOptionPane.showConfirmDialog(self._mainPanel, headerDialog, 
+            "Edit Custom Header", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE)
+        
+        if result == JOptionPane.OK_OPTION:
+            new_name = nameField.getText().strip()
+            new_value = valueField.getText().strip()
+            new_description = descField.getText().strip()
+            new_enabled = enabledCheck.isSelected()
+            
+            if new_name and new_value:
+                # Update table
+                self._headersTableModel.setValueAt(new_name, selected, 0)
+                self._headersTableModel.setValueAt(new_value, selected, 1)
+                self._headersTableModel.setValueAt(new_description, selected, 2)
+                self._headersTableModel.setValueAt("✓" if new_enabled else "✗", selected, 3)
+                
+                # Update stored header data
+                if hasattr(self, 'custom_headers'):
+                    for header in self.custom_headers:
+                        if header["name"] == name:  # Find by old name
+                            header["name"] = new_name
+                            header["value"] = new_value
+                            header["description"] = new_description
+                            header["enabled"] = new_enabled
+                            break
+                
+                # Refresh headers in API Tester tab
+                self._refreshHeadersFromSpec()
+                
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "Custom header updated successfully", 
+                    "Success", JOptionPane.INFORMATION_MESSAGE)
+            else:
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "Header name and value are required", 
+                    "Error", JOptionPane.ERROR_MESSAGE)
+                
+    def _removeHeader(self, event):
+        """Remove selected custom header"""
+        selected = self._headersTable.getSelectedRow()
+        if selected < 0:
+            JOptionPane.showMessageDialog(self._mainPanel, "Please select a header to remove", "Info", JOptionPane.INFORMATION_MESSAGE)
+            return
+        
+        header_name = self._headersTableModel.getValueAt(selected, 0)
+        
+        # Confirm deletion
+        result = JOptionPane.showConfirmDialog(self._mainPanel,
+            "Are you sure you want to remove header '" + header_name + "'?",
+            "Confirm Removal", JOptionPane.YES_NO_OPTION)
+        
+        if result == JOptionPane.YES_OPTION:
+            # Remove from table
             self._headersTableModel.removeRow(selected)
+            
+            # Remove from stored headers
+            if hasattr(self, 'custom_headers'):
+                self.custom_headers = [h for h in self.custom_headers if h["name"] != header_name]
+            
             # Refresh headers in API Tester tab
             self._refreshHeadersFromSpec()
+            
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "Header '" + header_name + "' removed successfully", 
+                "Success", JOptionPane.INFORMATION_MESSAGE)
+    
+    def _clearAllHeaders(self, event):
+        """Clear all custom headers"""
+        if not hasattr(self, 'custom_headers') or not self.custom_headers:
+            JOptionPane.showMessageDialog(self._mainPanel, "No headers to clear", "Info", JOptionPane.INFORMATION_MESSAGE)
+            return
+        
+        result = JOptionPane.showConfirmDialog(self._mainPanel,
+            "Are you sure you want to clear all custom headers?",
+            "Confirm Clear All", JOptionPane.YES_NO_OPTION)
+        
+        if result == JOptionPane.YES_OPTION:
+            self.custom_headers = []
+            self._headersTableModel.setRowCount(0)
+            
+            # Refresh headers in API Tester tab
+            self._refreshHeadersFromSpec()
+            
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "All custom headers cleared successfully", 
+                "Success", JOptionPane.INFORMATION_MESSAGE)
+    
+    def _saveHeaders(self, event):
+        """Save custom headers to a file"""
+        if not hasattr(self, 'custom_headers') or not self.custom_headers:
+            JOptionPane.showMessageDialog(self._mainPanel, "No headers to save", "Info", JOptionPane.INFORMATION_MESSAGE)
+            return
+        
+        # Create file chooser
+        file_chooser = JFileChooser()
+        file_chooser.setDialogTitle("Save Custom Headers")
+        file_chooser.setFileSelectionMode(JFileChooser.FILES_ONLY)
+        file_chooser.setSelectedFile(JavaFile("custom_headers.json"))
+        
+        result = file_chooser.showSaveDialog(self._mainPanel)
+        if result == JFileChooser.APPROVE_OPTION:
+            try:
+                file_path = file_chooser.getSelectedFile().getAbsolutePath()
+                
+                # Save headers to JSON file
+                with open(file_path, 'w') as f:
+                    json.dump(self.custom_headers, f, indent=2)
+                
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "Custom headers saved to:\n" + file_path, 
+                    "Success", JOptionPane.INFORMATION_MESSAGE)
+                    
+            except Exception as e:
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "Error saving headers: " + str(e), 
+                    "Error", JOptionPane.ERROR_MESSAGE)
+    
+    def _loadHeaders(self, event):
+        """Load custom headers from a file"""
+        # Create file chooser
+        file_chooser = JFileChooser()
+        file_chooser.setDialogTitle("Load Custom Headers")
+        file_chooser.setFileSelectionMode(JFileChooser.FILES_ONLY)
+        file_chooser.setFileFilter(javax.swing.filechooser.FileNameExtensionFilter("JSON files", "json"))
+        
+        result = file_chooser.showOpenDialog(self._mainPanel)
+        if result == JFileChooser.APPROVE_OPTION:
+            try:
+                file_path = file_chooser.getSelectedFile().getAbsolutePath()
+                
+                # Load headers from JSON file
+                with open(file_path, 'r') as f:
+                    loaded_headers = json.load(f)
+                
+                # Validate headers
+                if not isinstance(loaded_headers, list):
+                    raise ValueError("Invalid file format: expected a list of headers")
+                
+                # Clear existing headers
+                self.custom_headers = []
+                self._headersTableModel.setRowCount(0)
+                
+                # Add loaded headers
+                for header in loaded_headers:
+                    if isinstance(header, dict) and 'name' in header and 'value' in header:
+                        self.custom_headers.append(header)
+                        enabled_symbol = "✓" if header.get("enabled", True) else "✗"
+                        description = header.get("description", "")
+                        self._headersTableModel.addRow([
+                            header["name"], 
+                            header["value"], 
+                            description, 
+                            enabled_symbol
+                        ])
+                
+                # Refresh headers in API Tester tab
+                self._refreshHeadersFromSpec()
+                
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "Loaded " + str(len(loaded_headers)) + " custom headers from:\n" + file_path, 
+                    "Success", JOptionPane.INFORMATION_MESSAGE)
+                    
+            except Exception as e:
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "Error loading headers: " + str(e), 
+                    "Error", JOptionPane.ERROR_MESSAGE)
             
 
         
@@ -1981,12 +3733,10 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                 self._requestHeadersTableModel.addRow([header, value, "Auth"])
         
         # Add global custom headers (always, regardless of endpoint selection)
-        if hasattr(self, '_headersTableModel'):
-            for i in range(self._headersTableModel.getRowCount()):
-                name = self._headersTableModel.getValueAt(i, 0)
-                value = self._headersTableModel.getValueAt(i, 1)
-                if name and value:
-                    self._requestHeadersTableModel.addRow([name, value, "Global"])
+        if hasattr(self, 'custom_headers'):
+            for header in self.custom_headers:
+                if header.get("enabled", True) and header.get("name") and header.get("value"):
+                    self._requestHeadersTableModel.addRow([header["name"], header["value"], "Global"])
     
     def _updateRequestFromParams(self, event=None):
         """Update the request URL and headers from parameter tables"""
@@ -2074,6 +3824,17 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         # Save request
         saveRequest = JMenuItem("Save request to file", actionPerformed=lambda e: self._saveRequest())
         self._requestPopup.add(saveRequest)
+        
+        # Add separator and additional useful options
+        self._requestPopup.addSeparator()
+        
+        # Copy URL
+        copyUrl = JMenuItem("Copy URL", actionPerformed=lambda e: self._copyUrl())
+        self._requestPopup.add(copyUrl)
+        
+        # Copy method
+        copyMethod = JMenuItem("Copy HTTP Method", actionPerformed=lambda e: self._copyMethod())
+        self._requestPopup.add(copyMethod)
     
     def _setRequestText(self, text, force_update=False):
         """Set request text with syntax highlighting"""
@@ -2118,16 +3879,16 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
     def _setResponseText(self, text, status_code=None):
         """Set response text with syntax highlighting"""
         if not text:
-            self._responseViewer.setText("")
+            self._responseEditor.setText("")
             return
             
         # If it's already a full HTTP response, highlight it
         if text.startswith("HTTP/"):
             try:
-                self.syntax_highlighter.highlight_http_response(self._responseViewer, text)
+                self.syntax_highlighter.highlight_http_response(self._responseEditor, text)
             except Exception as e:
                 self._callbacks.printError("Response highlighting error: " + str(e))
-                self._responseViewer.setText(text)
+                self._responseEditor.setText(text)
         else:
             # Build a minimal HTTP response for highlighting
             status_line = "HTTP/1.1 " + str(status_code or 200) + " OK\n"
@@ -2145,10 +3906,10 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             full_response = status_line + headers + "\n" + text
             
             try:
-                self.syntax_highlighter.highlight_http_response(self._responseViewer, full_response)
+                self.syntax_highlighter.highlight_http_response(self._responseEditor, full_response)
             except Exception as e:
                 self._callbacks.printError("Response highlighting error: " + str(e))
-                self._responseViewer.setText(text)
+                self._responseEditor.setText(text)
     
     def _buildCurrentRequest(self):
         """Build the current request as bytes"""
@@ -2212,6 +3973,16 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
     
     def _sendToRepeater(self):
         """Send current request to Repeater"""
+        # Check if we have at least a URL and method
+        url = self._requestUrlField.getText().strip()
+        method = str(self._methodCombo.getSelectedItem())
+        
+        if not url:
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "Please enter a URL first", 
+                "No URL", JOptionPane.WARNING_MESSAGE)
+            return
+        
         request_bytes = self._buildCurrentRequest()
         http_service = self._getHttpService()
         
@@ -2224,9 +3995,23 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                 "Swagger API Tester"
             )
             self._callbacks.printOutput("Request sent to Repeater")
+        else:
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "Error building request. Please check URL and parameters.", 
+                "Request Error", JOptionPane.ERROR_MESSAGE)
     
     def _sendToIntruder(self):
         """Send current request to Intruder"""
+        # Check if we have at least a URL and method
+        url = self._requestUrlField.getText().strip()
+        method = str(self._methodCombo.getSelectedItem())
+        
+        if not url:
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "Please enter a URL first", 
+                "No URL", JOptionPane.WARNING_MESSAGE)
+            return
+        
         request_bytes = self._buildCurrentRequest()
         http_service = self._getHttpService()
         
@@ -2238,6 +4023,10 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                 request_bytes
             )
             self._callbacks.printOutput("Request sent to Intruder")
+        else:
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "Error building request. Please check URL and parameters.", 
+                "Request Error", JOptionPane.ERROR_MESSAGE)
     
     def _sendToScanner(self):
         """Send current request to Scanner"""
@@ -2337,9 +4126,59 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                         "Request saved successfully",
                         "Success", JOptionPane.INFORMATION_MESSAGE)
             except Exception as e:
+                        JOptionPane.showMessageDialog(self._mainPanel,
+            "Error saving request: " + str(e),
+            "Error", JOptionPane.ERROR_MESSAGE)
+    
+    def _copyUrl(self):
+        """Copy current URL to clipboard"""
+        try:
+            url = self._requestUrlField.getText()
+            if url:
+                # Use Java clipboard
+                from java.awt import Toolkit
+                from java.awt.datatransfer import StringSelection, Clipboard
+                
+                toolkit = Toolkit.getDefaultToolkit()
+                clipboard = toolkit.getSystemClipboard()
+                selection = StringSelection(url)
+                clipboard.setContents(selection, selection)
+                
+                self._callbacks.printOutput("URL copied to clipboard: " + url)
                 JOptionPane.showMessageDialog(self._mainPanel,
-                    "Error saving request: " + str(e),
-                    "Error", JOptionPane.ERROR_MESSAGE)
+                    "URL copied to clipboard", 
+                    "Success", JOptionPane.INFORMATION_MESSAGE)
+            else:
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "No URL to copy", 
+                    "Info", JOptionPane.INFORMATION_MESSAGE)
+        except Exception as e:
+            self._callbacks.printError("Error copying URL: " + str(e))
+    
+    def _copyMethod(self):
+        """Copy current HTTP method to clipboard"""
+        try:
+            method = str(self._methodCombo.getSelectedItem())
+            if method:
+                # Use Java clipboard
+                from java.awt import Toolkit
+                from java.awt.datatransfer import StringSelection, Clipboard
+                
+                toolkit = Toolkit.getDefaultToolkit()
+                clipboard = toolkit.getSystemClipboard()
+                selection = StringSelection(method)
+                clipboard.setContents(selection, selection)
+                
+                self._callbacks.printOutput("HTTP method copied to clipboard: " + method)
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "HTTP method copied to clipboard", 
+                    "Success", JOptionPane.INFORMATION_MESSAGE)
+            else:
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "No HTTP method to copy", 
+                    "Info", JOptionPane.INFORMATION_MESSAGE)
+        except Exception as e:
+            self._callbacks.printError("Error copying HTTP method: " + str(e))
     
     # IContextMenuFactory implementation
     def createMenuItems(self, invocation):
