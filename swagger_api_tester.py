@@ -833,6 +833,29 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         
         headersPanel.add(headerControlsPanel, BorderLayout.SOUTH)
         
+        # Header overrides section (globally override specific header values)
+        overridesBorder = BorderFactory.createTitledBorder("Global Header Overrides (Update existing headers by name)")
+        overridesPanel = JPanel(BorderLayout())
+        overridesPanel.setBorder(overridesBorder)
+        
+        # Table for overrides
+        self._headerOverridesTableModel = DefaultTableModel(["Header Name", "New Value", "Enabled"], 0)
+        self._headerOverridesTable = JTable(self._headerOverridesTableModel)
+        overridesPanel.add(JScrollPane(self._headerOverridesTable), BorderLayout.CENTER)
+        
+        # Buttons for overrides
+        overridesBtnPanel = JPanel()
+        addOverrideBtn = JButton("Add Override", actionPerformed=self._addHeaderOverride)
+        editOverrideBtn = JButton("Edit Selected", actionPerformed=self._editHeaderOverride)
+        removeOverrideBtn = JButton("Remove Selected", actionPerformed=self._removeHeaderOverride)
+        applyOverrideBtn = JButton("Apply to Current Request", actionPerformed=self._applyHeaderOverrides)
+        
+        overridesBtnPanel.add(addOverrideBtn)
+        overridesBtnPanel.add(editOverrideBtn)
+        overridesBtnPanel.add(removeOverrideBtn)
+        overridesBtnPanel.add(applyOverrideBtn)
+        overridesPanel.add(overridesBtnPanel, BorderLayout.SOUTH)
+        
         # Request options
         optionsBorder = BorderFactory.createTitledBorder("Request Options")
         optionsPanel = JPanel()
@@ -877,6 +900,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             layout.createParallelGroup()
                 .addComponent(authPanel)
                 .addComponent(headersPanel)
+                .addComponent(overridesPanel)
                 .addComponent(optionsPanel)
         )
         
@@ -884,6 +908,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             layout.createSequentialGroup()
                 .addComponent(authPanel)
                 .addComponent(headersPanel)
+                .addComponent(overridesPanel)
                 .addComponent(optionsPanel)
         )
         
@@ -2791,10 +2816,12 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             # Build request
             request_info = self._helpers.buildHttpRequest(URL(url))
             
-            # Build headers
+            # Build headers (ensure query string is included in the request line)
+            parsed_url = urlparse(url)
+            path_with_query = parsed_url.path + ("?" + parsed_url.query if parsed_url.query else "")
             headers = []
-            headers.append(method + " " + urlparse(url).path + " HTTP/1.1")
-            headers.append("Host: " + urlparse(url).netloc)
+            headers.append(method + " " + path_with_query + " HTTP/1.1")
+            headers.append("Host: " + parsed_url.netloc)
             
             # Check if this method actually has body parameters
             has_body_param = False
@@ -2811,16 +2838,20 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                 headers.append("Content-Type: " + content_type)
                 
             # Add headers from the request headers table (includes spec, auth, global, and manual headers)
+            existing_accept = False
             for i in range(self._requestHeadersTableModel.getRowCount()):
                 name = self._requestHeadersTableModel.getValueAt(i, 0)
                 value = self._requestHeadersTableModel.getValueAt(i, 1)
                 if name and value:  # Only add non-empty headers
                     headers.append(str(name) + ": " + str(value))
+                    if str(name).strip().lower() == "accept":
+                        existing_accept = True
                 
             # Add default headers if enabled
             if self._includeDefaultHeadersCheck.isSelected():
                 headers.append("User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36")
-                headers.append("Accept: */*")
+                if not existing_accept:
+                    headers.append("Accept: */*")
                 
             # Build full request (only add body for methods that support it AND have body parameters)
             if body and method in ["POST", "PUT", "PATCH", "DELETE"] and has_body_param:
@@ -3293,6 +3324,75 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         
         return HeadersTableMouseListener(self)
             
+    # Header override management
+    def _addHeaderOverride(self, event):
+        name = JOptionPane.showInputDialog(self._mainPanel, "Header Name to Override (case-insensitive):")
+        if not name:
+            return
+        value = JOptionPane.showInputDialog(self._mainPanel, "New Value for '" + str(name) + "':")
+        if value is None:
+            return
+        enable_now = JOptionPane.showConfirmDialog(self._mainPanel,
+            "Enable this override now?", "Enable Override",
+            JOptionPane.YES_NO_OPTION)
+        enabled = (enable_now == JOptionPane.YES_OPTION)
+        
+        if not hasattr(self, 'header_overrides'):
+            self.header_overrides = []
+        self.header_overrides.append({ 'name': str(name), 'value': str(value), 'enabled': enabled })
+        self._headerOverridesTableModel.addRow([str(name), str(value), "✓" if enabled else "✗"])
+        self._refreshHeadersFromSpec()
+
+    def _editHeaderOverride(self, event):
+        row = self._headerOverridesTable.getSelectedRow()
+        if row < 0:
+            JOptionPane.showMessageDialog(self._mainPanel, "Select an override to edit", "Info", JOptionPane.INFORMATION_MESSAGE)
+            return
+        current_name = self._headerOverridesTableModel.getValueAt(row, 0)
+        current_value = self._headerOverridesTableModel.getValueAt(row, 1)
+        current_enabled = self._headerOverridesTableModel.getValueAt(row, 2) == "✓"
+        
+        name = JOptionPane.showInputDialog(self._mainPanel, "Header Name:", current_name)
+        if not name:
+            return
+        value = JOptionPane.showInputDialog(self._mainPanel, "New Value:", current_value)
+        if value is None:
+            return
+        enable_now = JOptionPane.showConfirmDialog(self._mainPanel,
+            "Enable this override?", "Enable Override",
+            JOptionPane.YES_NO_OPTION)
+        enabled = (enable_now == JOptionPane.YES_OPTION)
+        
+        self._headerOverridesTableModel.setValueAt(name, row, 0)
+        self._headerOverridesTableModel.setValueAt(value, row, 1)
+        self._headerOverridesTableModel.setValueAt("✓" if enabled else "✗", row, 2)
+        
+        updated = False
+        for o in getattr(self, 'header_overrides', []):
+            if o.get('name', '').lower() == str(current_name).lower():
+                o['name'] = str(name)
+                o['value'] = str(value)
+                o['enabled'] = enabled
+                updated = True
+                break
+        if not updated:
+            self.header_overrides.append({ 'name': str(name), 'value': str(value), 'enabled': enabled })
+        self._refreshHeadersFromSpec()
+
+    def _removeHeaderOverride(self, event):
+        row = self._headerOverridesTable.getSelectedRow()
+        if row < 0:
+            JOptionPane.showMessageDialog(self._mainPanel, "Select an override to remove", "Info", JOptionPane.INFORMATION_MESSAGE)
+            return
+        name = self._headerOverridesTableModel.getValueAt(row, 0)
+        self._headerOverridesTableModel.removeRow(row)
+        if hasattr(self, 'header_overrides'):
+            self.header_overrides = [o for o in self.header_overrides if o.get('name', '').lower() != str(name).lower()]
+        self._refreshHeadersFromSpec()
+
+    def _applyHeaderOverrides(self, event=None):
+        self._refreshHeadersFromSpec()
+
     def _addHeader(self, event):
         """Add custom header with enhanced dialog"""
         # Create custom dialog for header input
@@ -3724,7 +3824,28 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             for i in range(self._headerParamsTableModel.getRowCount()):
                 name = self._headerParamsTableModel.getValueAt(i, 0)
                 value = self._headerParamsTableModel.getValueAt(i, 1)
-                if name and value:
+                
+                if name:
+                    # Provide sensible defaults for common headers if value missing
+                    if (value is None) or (str(value).strip() == ""):
+                        lname = str(name).strip().lower()
+                        if lname == "accept":
+                            # Infer Accept from spec (operation/global produces or response content)
+                            try:
+                                value = self._inferAcceptHeader()
+                            except:
+                                value = "application/json"
+                        elif lname == "accept-language":
+                            value = "en-US"
+                        elif lname == "content-type":
+                            try:
+                                value = str(self._contentTypeCombo.getSelectedItem())
+                            except:
+                                value = "application/json"
+                        else:
+                            value = ""
+                    
+                    # Always add spec headers so the user can edit missing values
                     self._requestHeadersTableModel.addRow([name, value, "Spec"])
         
         # Add global authentication headers (always, regardless of endpoint selection)
@@ -3737,6 +3858,66 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             for header in self.custom_headers:
                 if header.get("enabled", True) and header.get("name") and header.get("value"):
                     self._requestHeadersTableModel.addRow([header["name"], header["value"], "Global"])
+
+        # Apply header overrides (update existing rows by header name) and ensure presence
+        try:
+            overrides = getattr(self, 'header_overrides', [])
+            if overrides and self._requestHeadersTableModel.getRowCount() > 0:
+                for override in overrides:
+                    if not override:
+                        continue
+                    name = str(override.get('name', '')).strip()
+                    new_value = override.get('value', '')
+                    enabled = override.get('enabled', True)
+                    if not enabled or not name:
+                        continue
+                    # Scan rows and update matching header names
+                    for i in range(self._requestHeadersTableModel.getRowCount()):
+                        row_name = str(self._requestHeadersTableModel.getValueAt(i, 0)).strip()
+                        if row_name.lower() == name.lower():
+                            self._requestHeadersTableModel.setValueAt(new_value, i, 1)
+                            break
+                    else:
+                        # If not present at all, add it as an Override source to take precedence
+                        self._requestHeadersTableModel.addRow([name, new_value, "Override"])                    
+        except Exception as e:
+            self._callbacks.printError("Error applying header overrides: " + str(e))
+
+    def _inferAcceptHeader(self):
+        """Infer the best Accept header based on the spec and selected operation"""
+        # Priority:
+        # 1) Operation-level produces (Swagger 2.0)
+        # 2) Global produces (Swagger 2.0)
+        # 3) Operation success response content types (OpenAPI 3.0)
+        # 4) Current content-type selection
+        # 5) Fallback to application/json
+        try:
+            # Operation-level (Swagger 2.0)
+            if self.current_endpoint:
+                details = self.current_endpoint.get('details', {})
+                if isinstance(details, dict) and 'produces' in details and details['produces']:
+                    return details['produces'][0]
+                
+                # OpenAPI 3.0: infer from 2xx responses content
+                if 'responses' in details:
+                    for code, resp in details['responses'].items():
+                        if str(code).startswith('2') and isinstance(resp, dict):
+                            content = resp.get('content')
+                            if isinstance(content, dict) and content:
+                                return list(content.keys())[0]
+            
+            # Global level (Swagger 2.0)
+            if self.swagger_spec and 'produces' in self.swagger_spec and self.swagger_spec['produces']:
+                return self.swagger_spec['produces'][0]
+            
+            # Current selection
+            if hasattr(self, '_contentTypeCombo'):
+                ct = str(self._contentTypeCombo.getSelectedItem())
+                if ct and ct.strip():
+                    return ct
+        except:
+            pass
+        return 'application/json'
     
     def _updateRequestFromParams(self, event=None):
         """Update the request URL and headers from parameter tables"""
