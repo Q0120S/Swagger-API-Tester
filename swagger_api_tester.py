@@ -1022,6 +1022,9 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         self._endpointList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
         self._endpointList.addListSelectionListener(self._createListSelectionListener())
         
+        # Add keyboard shortcut for sending requests (Ctrl+Space / Cmd+Space)
+        self._endpointList.addKeyListener(self._createRequestShortcutListener())
+        
         # Info panel with debug buttons
         infoPanel = JPanel(BorderLayout())
         
@@ -1091,6 +1094,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         # Send button
         self._sendButton = JButton("Send Request", actionPerformed=self._sendRequest)
         self._sendButton.setBackground(Color(216, 102, 51))
+        self._sendButton.setToolTipText("Send Request (Shortcut: Ctrl+Space)")
         
         # Quick base URL change
         quickBaseUrlLabel = JLabel("Base URL:")
@@ -1189,6 +1193,13 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         requestPanel.addMouseListener(RequestMouseListener(self))
         self._bodyPanel.addMouseListener(RequestMouseListener(self))
         
+        # Add keyboard shortcut for sending requests (Ctrl+Space / Cmd+Space)
+        self._requestEditor.addKeyListener(self._createRequestShortcutListener())
+        self._requestUrlField.addKeyListener(self._createRequestShortcutListener())
+        
+        # Also add Swing key bindings as backup (more reliable)
+        self._addSwingKeyBindings()
+        
         # Response panel
         responsePanel = JPanel(BorderLayout())
         responsePanel.setBorder(BorderFactory.createTitledBorder("Response"))
@@ -1214,8 +1225,15 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         debugParamsButton.setForeground(Color(200, 200, 200))
         debugParamsButton.setToolTipText("Show current endpoint parameters for debugging")
         
+        # Test keyboard shortcut button
+        testShortcutButton = JButton("Test Shortcut", actionPerformed=self._testKeyboardShortcut)
+        testShortcutButton.setBackground(Color(100, 100, 80))
+        testShortcutButton.setForeground(Color(200, 200, 200))
+        testShortcutButton.setToolTipText("Test if keyboard shortcut system is working")
+        
         responseButtonPanel.add(clearResponseButton)
         responseButtonPanel.add(debugParamsButton)
+        responseButtonPanel.add(testShortcutButton)
         responseInfoPanel.add(responseButtonPanel, BorderLayout.EAST)
         
         responsePanel.add(responseInfoPanel, BorderLayout.NORTH)
@@ -2800,7 +2818,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             return "&".join(params)
         return ""
         
-    def _sendRequest(self, event):
+    def _sendRequest(self, event=None):
         """Send the API request"""
         Thread(target=self._performRequest).start()
         
@@ -3323,6 +3341,173 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                         self.extender._callbacks.printOutput("Header '" + header_name + "' " + status_text)
         
         return HeadersTableMouseListener(self)
+    
+    def _createRequestShortcutListener(self):
+        """Create keyboard shortcut listener for sending requests (Ctrl+Space / Cmd+Space)"""
+        class RequestShortcutListener(KeyAdapter):
+            def __init__(self, extender):
+                self.extender = extender
+            
+            def keyPressed(self, event):
+                # Check for Control+Space (Send Request)
+                if event.getKeyCode() == KeyEvent.VK_SPACE and event.isControlDown():
+                    # Only send if an endpoint is selected
+                    if self.extender.current_endpoint:
+                        # Consume the event to prevent default behavior
+                        event.consume()
+                        # Send the request in a separate thread to avoid UI blocking
+                        from threading import Thread
+                        Thread(target=self.extender._sendRequest).start()
+                    else:
+                        JOptionPane.showMessageDialog(self.extender._mainPanel,
+                            "Please select an endpoint first", 
+                            "No Endpoint Selected", JOptionPane.INFORMATION_MESSAGE)
+            
+            def keyTyped(self, event):
+                # Check for Control+Space (Send Request)
+                if event.getKeyChar() == ' ' and event.isControlDown():
+                    if self.extender.current_endpoint:
+                        event.consume()
+                        from threading import Thread
+                        Thread(target=self.extender._sendRequest).start()
+                    else:
+                        JOptionPane.showMessageDialog(self.extender._mainPanel,
+                            "Please select an endpoint first", 
+                            "No Endpoint Selected", JOptionPane.INFORMATION_MESSAGE)
+                
+                # Check for Control+R (Send to Repeater)
+                elif char == 'r' and ctrl_down:
+                    if self.extender.current_endpoint:
+                        event.consume()
+                        from threading import Thread
+                        Thread(target=self.extender._sendToRepeater).start()
+                    else:
+                        JOptionPane.showMessageDialog(self.extender._mainPanel,
+                            "Please select an endpoint first", 
+                            "No Endpoint Selected", JOptionPane.INFORMATION_MESSAGE)
+                
+                # Check for Control+I (Send to Intruder)
+                elif char == 'i' and ctrl_down:
+                    if self.extender.current_endpoint:
+                        event.consume()
+                        from threading import Thread
+                        Thread(target=self.extender._sendToIntruder).start()
+                    else:
+                        JOptionPane.showMessageDialog(self.extender._mainPanel,
+                            "Please select an endpoint first", 
+                            "No Endpoint Selected", JOptionPane.INFORMATION_MESSAGE)
+                
+                # Check for Control+O (Send to Scanner)
+                elif char == 'o' and ctrl_down:
+                    if self.extender.current_endpoint:
+                        event.consume()
+                        from threading import Thread
+                        Thread(target=self.extender._sendToScanner).start()
+                    else:
+                        JOptionPane.showMessageDialog(self.extender._mainPanel,
+                            "Please select an endpoint first", 
+                            "No Endpoint Selected", JOptionPane.INFORMATION_MESSAGE)
+        
+        return RequestShortcutListener(self)
+    
+    def _addSwingKeyBindings(self):
+        """Add Swing key bindings for keyboard shortcuts (more reliable than KeyListener)"""
+        try:
+            from javax.swing import AbstractAction, KeyStroke
+            from java.awt.event import InputEvent
+            
+            # Create actions for different shortcuts
+            class SendRequestAction(AbstractAction):
+                def __init__(self, extender):
+                    self.extender = extender
+                    super(SendRequestAction, self).__init__("sendRequest")
+                
+                def actionPerformed(self, event):
+                    if self.extender.current_endpoint:
+                        from threading import Thread
+                        Thread(target=self.extender._sendRequest).start()
+                    else:
+                        JOptionPane.showMessageDialog(self.extender._mainPanel,
+                            "Please select an endpoint first", 
+                            "No Endpoint Selected", JOptionPane.INFORMATION_MESSAGE)
+            
+            class SendToRepeaterAction(AbstractAction):
+                def __init__(self, extender):
+                    self.extender = extender
+                    super(SendToRepeaterAction, self).__init__("sendToRepeater")
+                
+                def actionPerformed(self, event):
+                    if self.extender.current_endpoint:
+                        from threading import Thread
+                        Thread(target=self.extender._sendToRepeater).start()
+                    else:
+                        JOptionPane.showMessageDialog(self.extender._mainPanel,
+                            "Please select an endpoint first", 
+                            "No Endpoint Selected", JOptionPane.INFORMATION_MESSAGE)
+            
+            class SendToIntruderAction(AbstractAction):
+                def __init__(self, extender):
+                    self.extender = extender
+                    super(SendToIntruderAction, self).__init__("sendToIntruder")
+                
+                def actionPerformed(self, event):
+                    if self.extender.current_endpoint:
+                        from threading import Thread
+                        Thread(target=self.extender._sendToIntruder).start()
+                    else:
+                        JOptionPane.showMessageDialog(self.extender._mainPanel,
+                            "Please select an endpoint first", 
+                            "No Endpoint Selected", JOptionPane.INFORMATION_MESSAGE)
+            
+            class SendToScannerAction(AbstractAction):
+                def __init__(self, extender):
+                    self.extender = extender
+                    super(SendToScannerAction, self).__init__("sendToScanner")
+                
+                def actionPerformed(self, event):
+                    if self.extender.current_endpoint:
+                        from threading import Thread
+                        Thread(target=self.extender._sendToScanner).start()
+                    else:
+                        JOptionPane.showMessageDialog(self.extender._mainPanel,
+                            "Please select an endpoint first", 
+                            "No Endpoint Selected", JOptionPane.INFORMATION_MESSAGE)
+            
+            # Create action instances
+            sendRequestAction = SendRequestAction(self)
+            sendToRepeaterAction = SendToRepeaterAction(self)
+            sendToIntruderAction = SendToIntruderAction(self)
+            sendToScannerAction = SendToScannerAction(self)
+            
+            # Create key strokes for all shortcuts
+            ctrl_space = KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, InputEvent.CTRL_DOWN_MASK)
+            ctrl_r = KeyStroke.getKeyStroke(KeyEvent.VK_R, InputEvent.CTRL_DOWN_MASK)
+            ctrl_i = KeyStroke.getKeyStroke(KeyEvent.VK_I, InputEvent.CTRL_DOWN_MASK)
+            ctrl_o = KeyStroke.getKeyStroke(KeyEvent.VK_O, InputEvent.CTRL_DOWN_MASK)
+            
+            # Apply to all relevant components
+            components = [self._endpointList, self._requestEditor, self._requestUrlField]
+            
+            for component in components:
+                if hasattr(component, 'getInputMap') and hasattr(component, 'getActionMap'):
+                    input_map = component.getInputMap()
+                    action_map = component.getActionMap()
+                    
+                    # Add all key combinations
+                    input_map.put(ctrl_space, "sendRequest")
+                    input_map.put(ctrl_r, "sendToRepeater")
+                    input_map.put(ctrl_i, "sendToIntruder")
+                    input_map.put(ctrl_o, "sendToScanner")
+                    
+                    action_map.put("sendRequest", sendRequestAction)
+                    action_map.put("sendToRepeater", sendToRepeaterAction)
+                    action_map.put("sendToIntruder", sendToIntruderAction)
+                    action_map.put("sendToScanner", sendToScannerAction)
+            
+            self._callbacks.printOutput("Keyboard shortcuts configured successfully")
+            
+        except Exception as e:
+            self._callbacks.printError("Error adding Swing key bindings: " + str(e))
             
     # Header override management
     def _addHeaderOverride(self, event):
@@ -3392,6 +3577,38 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
 
     def _applyHeaderOverrides(self, event=None):
         self._refreshHeadersFromSpec()
+
+    def _testKeyboardShortcut(self, event):
+        """Test keyboard shortcut system"""
+        try:
+            self._callbacks.printOutput("=== KEYBOARD SHORTCUT TEST ===")
+            self._callbacks.printOutput("Current endpoint: " + str(self.current_endpoint))
+            self._callbacks.printOutput("Endpoint list focus: " + str(self._endpointList.hasFocus()))
+            self._callbacks.printOutput("Request editor focus: " + str(self._requestEditor.hasFocus()))
+            self._callbacks.printOutput("Request URL focus: " + str(self._requestUrlField.hasFocus()))
+            
+            # Test if components have key listeners
+            endpoint_listeners = self._endpointList.getKeyListeners()
+            editor_listeners = self._requestEditor.getKeyListeners()
+            url_listeners = self._requestUrlField.getKeyListeners()
+            
+            self._callbacks.printOutput("Endpoint list key listeners: " + str(len(endpoint_listeners)))
+            self._callbacks.printOutput("Request editor key listeners: " + str(len(editor_listeners)))
+            self._callbacks.printOutput("Request URL key listeners: " + str(len(url_listeners)))
+            
+            # Show dialog with info
+            info = "Keyboard Shortcut Test Results:\n\n"
+            info += "Current endpoint: " + ("Selected" if self.current_endpoint else "None") + "\n"
+            info += "Key listeners attached: " + str(len(endpoint_listeners) + len(editor_listeners) + len(url_listeners)) + "\n\n"
+            info += "To test shortcut:\n"
+            info += "1. Focus on endpoint list, URL field, or request editor\n"
+            info += "2. Press Control+Space\n"
+            info += "3. Check console output for debug messages"
+            
+            JOptionPane.showMessageDialog(self._mainPanel, info, "Keyboard Shortcut Test", JOptionPane.INFORMATION_MESSAGE)
+            
+        except Exception as e:
+            self._callbacks.printError("Error in keyboard shortcut test: " + str(e))
 
     def _addHeader(self, event):
         """Add custom header with enhanced dialog"""
@@ -4154,32 +4371,35 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
     
     def _sendToRepeater(self):
         """Send current request to Repeater"""
-        # Check if we have at least a URL and method
-        url = self._requestUrlField.getText().strip()
-        method = str(self._methodCombo.getSelectedItem())
-        
-        if not url:
-            JOptionPane.showMessageDialog(self._mainPanel,
-                "Please enter a URL first", 
-                "No URL", JOptionPane.WARNING_MESSAGE)
-            return
-        
-        request_bytes = self._buildCurrentRequest()
-        http_service = self._getHttpService()
-        
-        if request_bytes and http_service:
-            self._callbacks.sendToRepeater(
-                http_service.getHost(),
-                http_service.getPort(),
-                http_service.getProtocol() == "https",
-                request_bytes,
-                "Swagger API Tester"
-            )
-            self._callbacks.printOutput("Request sent to Repeater")
-        else:
-            JOptionPane.showMessageDialog(self._mainPanel,
-                "Error building request. Please check URL and parameters.", 
-                "Request Error", JOptionPane.ERROR_MESSAGE)
+        try:
+            # Check if we have at least a URL and method
+            url = self._requestUrlField.getText().strip()
+            method = str(self._methodCombo.getSelectedItem())
+            
+            if not url:
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "Please enter a URL first", 
+                    "No URL", JOptionPane.WARNING_MESSAGE)
+                return
+            
+            request_bytes = self._buildCurrentRequest()
+            http_service = self._getHttpService()
+            
+            if request_bytes and http_service:
+                self._callbacks.sendToRepeater(
+                    http_service.getHost(),
+                    http_service.getPort(),
+                    http_service.getProtocol() == "https",
+                    request_bytes,
+                    "Swagger API Tester"
+                )
+                self._callbacks.printOutput("Request sent to Repeater")
+            else:
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "Error building request. Please check URL and parameters.", 
+                    "Request Error", JOptionPane.ERROR_MESSAGE)
+        except Exception as e:
+            self._callbacks.printError("Error in _sendToRepeater: " + str(e))
     
     def _sendToIntruder(self):
         """Send current request to Intruder"""
@@ -4211,27 +4431,35 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
     
     def _sendToScanner(self):
         """Send current request to Scanner"""
-        request_bytes = self._buildCurrentRequest()
-        http_service = self._getHttpService()
-        
-        if request_bytes and http_service:
-            # Check if it's a GET request (Scanner typically needs a baseline request)
-            method = str(self._methodCombo.getSelectedItem())
-            if method != "GET":
-                result = JOptionPane.showConfirmDialog(self._mainPanel,
-                    "Scanner typically works best with GET requests.\nDo you want to continue?",
-                    "Non-GET Request", JOptionPane.YES_NO_OPTION)
-                if result != JOptionPane.YES_OPTION:
-                    return
+        try:
+            request_bytes = self._buildCurrentRequest()
+            http_service = self._getHttpService()
             
-            # Create a request-response pair (Scanner needs this)
-            self._callbacks.doActiveScan(
-                http_service.getHost(),
-                http_service.getPort(),
-                http_service.getProtocol() == "https",
-                request_bytes
-            )
-            self._callbacks.printOutput("Request sent to Scanner")
+            if request_bytes and http_service:
+                # Check if it's a GET request (Scanner typically needs a baseline request)
+                method = str(self._methodCombo.getSelectedItem())
+                
+                if method != "GET":
+                    result = JOptionPane.showConfirmDialog(self._mainPanel,
+                        "Scanner typically works best with GET requests.\nDo you want to continue?",
+                        "Non-GET Request", JOptionPane.YES_NO_OPTION)
+                    if result != JOptionPane.YES_OPTION:
+                        return
+                
+                # Create a request-response pair (Scanner needs this)
+                self._callbacks.doActiveScan(
+                    http_service.getHost(),
+                    http_service.getPort(),
+                    http_service.getProtocol() == "https",
+                    request_bytes
+                )
+                self._callbacks.printOutput("Request sent to Scanner")
+            else:
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "Error building request. Please check URL and parameters.", 
+                    "Request Error", JOptionPane.ERROR_MESSAGE)
+        except Exception as e:
+            self._callbacks.printError("Error in _sendToScanner: " + str(e))
     
     def _sendToComparer(self):
         """Send current request to Comparer"""
