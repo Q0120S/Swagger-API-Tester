@@ -517,7 +517,11 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         self._testerTab = self._createTesterTab()
         self._tabbedPane.addTab("API Tester", self._testerTab)
         
-        # Tab 3: Settings
+        # Tab 3: Bulk Testing
+        self._bulkTestingTab = self._createBulkTestingTab()
+        self._tabbedPane.addTab("Bulk Testing", self._bulkTestingTab)
+        
+        # Tab 4: Settings
         self._settingsTab = self._createSettingsTab()
         self._tabbedPane.addTab("Settings", self._settingsTab)
         
@@ -640,6 +644,1254 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         panel.add(topPanel, BorderLayout.NORTH)
         panel.add(centerPanel, BorderLayout.CENTER)
         panel.add(bottomPanel, BorderLayout.SOUTH)
+        
+        return panel
+        
+    # Bulk Testing Methods
+    def _startBulkTesting(self, event):
+        """Start bulk testing of all endpoints"""
+        if not hasattr(self, 'endpoints') or not self.endpoints:
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "No endpoints loaded. Please import a Swagger specification first.",
+                "No Endpoints", JOptionPane.WARNING_MESSAGE)
+            return
+        
+        if self._bulkTestingActive:
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "Bulk testing is already running. Please stop it first.",
+                "Already Running", JOptionPane.INFORMATION_MESSAGE)
+            return
+        
+        # Get options
+        try:
+            delay = int(self._bulkDelayField.getText())
+            timeout = int(self._bulkTimeoutField.getText())
+        except ValueError:
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "Please enter valid numbers for delay and timeout.",
+                "Invalid Input", JOptionPane.ERROR_MESSAGE)
+            return
+        
+        # Confirm start
+        result = JOptionPane.showConfirmDialog(self._mainPanel,
+            "Start bulk testing of {} endpoints?\n\n".format(len(self.endpoints)) +
+            "Delay: {}ms\nTimeout: {}ms\n\n".format(delay, timeout) +
+            "This will send requests to all endpoints sequentially.",
+            "Start Bulk Testing", JOptionPane.YES_NO_OPTION)
+        
+        if result != JOptionPane.YES_OPTION:
+            return
+        
+        # Start bulk testing
+        self._bulkTestingActive = True
+        self._bulkTestingPaused = False
+        self._bulkTestingStopped = False
+        self._bulkResults = []
+        self._bulkResultsTableModel.setRowCount(0)
+        self._bulkCurrentIndex = 0  # Track current endpoint index for resume
+        
+        # Update UI
+        self._bulkProgressBar.setString("Starting...")
+        self._bulkStatusLabel.setText("Testing in progress...")
+        self._bulkStatusLabel.setForeground(Color(76, 175, 80))
+        
+        # Update button states
+        self._updateBulkTestingButtonStates()
+        
+        # Start testing thread
+        self._bulkTestingThread = Thread(target=self._runBulkTesting, args=(delay, timeout))
+        self._bulkTestingThread.start()
+    
+    def _stopBulkTesting(self, event):
+        """Stop bulk testing"""
+        if not self._bulkTestingActive:
+            return
+        
+        # Confirm stop
+        result = JOptionPane.showConfirmDialog(self._mainPanel,
+            "Are you sure you want to stop bulk testing?\n\n" +
+            "This will completely stop the testing process.",
+            "Stop Bulk Testing", JOptionPane.YES_NO_OPTION)
+        
+        if result != JOptionPane.YES_OPTION:
+            return
+        
+        self._bulkTestingActive = False
+        self._bulkTestingPaused = False
+        self._bulkTestingStopped = True
+        self._bulkProgressBar.setString("Stopped")
+        self._bulkStatusLabel.setText("Testing stopped by user")
+        self._bulkStatusLabel.setForeground(Color(244, 67, 54))
+        
+        # Update button states
+        self._updateBulkTestingButtonStates()
+        
+        if self._bulkTestingThread and self._bulkTestingThread.is_alive():
+            self._bulkTestingThread.join(timeout=1.0)
+    
+    def _pauseBulkTesting(self, event):
+        """Pause bulk testing"""
+        if not self._bulkTestingActive or self._bulkTestingPaused:
+            return
+        
+        self._bulkTestingPaused = True
+        self._bulkProgressBar.setString("Paused")
+        self._bulkStatusLabel.setText("Testing paused - click Resume to continue")
+        self._bulkStatusLabel.setForeground(Color(255, 152, 0))  # Orange
+        
+        # Update button states and summary
+        self._updateBulkTestingButtonStates()
+        self._updateBulkSummary()
+    
+    def _resumeBulkTesting(self, event):
+        """Resume bulk testing"""
+        if not self._bulkTestingActive or not self._bulkTestingPaused:
+            return
+        
+        self._bulkTestingPaused = False
+        self._bulkProgressBar.setString("Resuming...")
+        self._bulkStatusLabel.setText("Testing resumed...")
+        self._bulkStatusLabel.setForeground(Color(76, 175, 80))  # Green
+        
+        # Update button states and summary
+        self._updateBulkTestingButtonStates()
+        self._updateBulkSummary()
+    
+    def _restartBulkTesting(self, event):
+        """Restart bulk testing from the beginning"""
+        if self._bulkTestingActive:
+            # Stop current testing first
+            self._stopBulkTesting(None)
+        
+        # Wait a moment for the thread to stop
+        if hasattr(self, '_bulkTestingThread') and self._bulkTestingThread and self._bulkTestingThread.is_alive():
+            self._bulkTestingThread.join(timeout=2.0)
+        
+        # Reset state
+        self._bulkTestingStopped = False
+        self._bulkCurrentIndex = 0
+        
+        # Start fresh
+        self._startBulkTesting(None)
+    
+    def _updateBulkTestingButtonStates(self):
+        """Update button states based on current testing status"""
+        try:
+            if hasattr(self, '_startBulkButton'):
+                self._startBulkButton.setEnabled(not self._bulkTestingActive)
+            
+            if hasattr(self, '_pauseBulkButton'):
+                self._pauseBulkButton.setEnabled(self._bulkTestingActive and not self._bulkTestingPaused)
+            
+            if hasattr(self, '_resumeBulkButton'):
+                self._resumeBulkButton.setEnabled(self._bulkTestingActive and self._bulkTestingPaused)
+            
+            if hasattr(self, '_stopBulkButton'):
+                self._stopBulkButton.setEnabled(self._bulkTestingActive)
+            
+            if hasattr(self, '_restartBulkButton'):
+                self._restartBulkButton.setEnabled(not self._bulkTestingActive)
+                
+        except Exception as e:
+            self._callbacks.printError("Error updating button states: " + str(e))
+    
+    def _clearBulkResults(self, event):
+        """Clear bulk testing results"""
+        self._bulkResults = []
+        self._bulkResultsTableModel.setRowCount(0)
+        self._bulkSummaryLabel.setText("Results cleared")
+        self._bulkProgressBar.setString("Ready")
+        self._bulkStatusLabel.setText("No testing started")
+        self._bulkStatusLabel.setForeground(Color(100, 100, 100))
+        
+        # Reset state variables
+        self._bulkCurrentIndex = 0
+        self._bulkTestingStopped = False
+        
+        # Update button states
+        self._updateBulkTestingButtonStates()
+        
+        # Disable export button since no results
+        if hasattr(self, '_exportButton'):
+            self._exportButton.setEnabled(False)
+    
+    def _runBulkTesting(self, delay, timeout):
+        """Run the bulk testing in a separate thread"""
+        try:
+            total_endpoints = len(self.endpoints)
+            completed = self._bulkCurrentIndex  # Start from current index for resume
+            
+            # Loop through endpoints starting from current index
+            for i in range(self._bulkCurrentIndex, total_endpoints):
+                # Check if testing was stopped
+                if self._bulkTestingStopped:
+                    break
+                
+                # Check if testing is paused
+                while self._bulkTestingPaused and not self._bulkTestingStopped:
+                    time.sleep(0.1)  # Small delay while paused
+                
+                # Check if testing was stopped while paused
+                if self._bulkTestingStopped:
+                    break
+                
+                # Update current index for resume functionality
+                self._bulkCurrentIndex = i
+                
+                try:
+                    endpoint = self.endpoints[i]
+                    
+                    # Test this endpoint
+                    result = self._testSingleEndpoint(endpoint, timeout)
+                    self._bulkResults.append(result)
+                    
+                    # Add result to table
+                    self._addBulkResultToTable(result)
+                    
+                    # Enable export button since we now have results
+                    if hasattr(self, '_exportButton'):
+                        self._exportButton.setEnabled(True)
+                    
+                    # Update progress
+                    completed += 1
+                    progress = int((completed / total_endpoints) * 100)
+                    
+                    # Update progress bar on EDT
+                    try:
+                        from javax.swing import SwingUtilities
+                        SwingUtilities.invokeLater(lambda: self._updateBulkProgress(progress, completed, total_endpoints))
+                    except:
+                        # Fallback: update directly
+                        self._updateBulkProgress(progress, completed, total_endpoints)
+                    
+                    # Delay before next request (only if not paused and not stopped)
+                    if completed < total_endpoints and not self._bulkTestingPaused and not self._bulkTestingStopped:
+                        time.sleep(delay / 1000.0)
+                        
+                except Exception as e:
+                    # Log error and continue
+                    error_result = {
+                        "status": "Error",
+                        "method": endpoint.get("method", "UNKNOWN"),
+                        "path": endpoint.get("path", "UNKNOWN"),
+                        "response_code": "N/A",
+                        "response_time": "N/A",
+                        "size": "N/A",
+                        "notes": "Error: {}".format(str(e)),
+                        "request": "Failed to build request",
+                        "response": "No response due to error"
+                    }
+                    self._bulkResults.append(error_result)
+                    self._addBulkResultToTable(error_result)
+                    
+                    # Enable export button since we now have results
+                    if hasattr(self, '_exportButton'):
+                        self._exportButton.setEnabled(True)
+                    
+                    completed += 1
+            
+            # Testing completed (only if not stopped)
+            if not self._bulkTestingStopped:
+                try:
+                    from javax.swing import SwingUtilities
+                    SwingUtilities.invokeLater(lambda: self._bulkTestingCompleted())
+                except:
+                    # Fallback: call directly
+                    self._bulkTestingCompleted()
+            
+        except Exception as e:
+            self._callbacks.printError("Error in bulk testing: " + str(e))
+            if not self._bulkTestingStopped:
+                try:
+                    from javax.swing import SwingUtilities
+                    SwingUtilities.invokeLater(lambda: self._bulkTestingCompleted())
+                except:
+                    # Fallback: call directly
+                    self._bulkTestingCompleted()
+    
+    def _testSingleEndpoint(self, endpoint, timeout):
+        """Test a single endpoint and return results"""
+        start_time = time.time()
+        
+        try:
+            # Set the current endpoint so we can use the existing request building logic
+            self.current_endpoint = endpoint
+            self._loadEndpointDetails()
+            
+            # Build request using the same logic as API Tester tab
+            request_bytes = self._buildCurrentRequest()
+            http_service = self._getHttpService()
+            
+            if not request_bytes or not http_service:
+                return {
+                    "status": "Error",
+                    "method": endpoint["method"],
+                    "path": endpoint["path"],
+                    "response_code": "N/A",
+                    "response_time": "N/A",
+                    "size": "N/A",
+                    "notes": "Failed to build request"
+                }
+            
+            # Send request using the same method as API Tester tab
+            response = self._callbacks.makeHttpRequest(http_service, request_bytes)
+            
+            # Calculate response time
+            response_time = int((time.time() - start_time) * 1000)
+            
+            if response:
+                response_info = self._helpers.analyzeResponse(response.getResponse())
+                status_code = response_info.getStatusCode()
+                response_size = len(response.getResponse())
+                
+                # Get request and response data for export
+                request_data = self._helpers.bytesToString(request_bytes)
+                response_data = self._helpers.bytesToString(response.getResponse())
+                
+                return {
+                    "status": "Success",
+                    "method": endpoint["method"],
+                    "path": endpoint["path"],
+                    "response_code": status_code,
+                    "response_time": "{}ms".format(response_time),
+                    "size": response_size,
+                    "notes": "Response received",
+                    "request": request_data,
+                    "response": response_data
+                }
+            else:
+                # Get request data for export even if no response
+                request_data = self._helpers.bytesToString(request_bytes)
+                
+                return {
+                    "status": "Error",
+                    "method": endpoint["method"],
+                    "path": endpoint["path"],
+                    "response_code": "No Response",
+                    "response_time": "{}ms".format(response_time),
+                    "size": "N/A",
+                    "notes": "No response received",
+                    "request": request_data,
+                    "response": "No response received"
+                }
+            
+        except Exception as e:
+            return {
+                "status": "Error",
+                "method": endpoint.get("method", "UNKNOWN"),
+                "path": endpoint.get("path", "UNKNOWN"),
+                "response_code": "N/A",
+                "response_time": "N/A",
+                "size": "N/A",
+                "notes": "Error: {}".format(str(e)),
+                "request": "Failed to build request",
+                "response": "No response due to error"
+            }
+    
+    def _addBulkResultToTable(self, result):
+        """Add a bulk testing result to the results table"""
+        try:
+            # Add row to table model
+            row_data = [
+                result["status"],
+                result["method"],
+                result["path"],
+                result["response_code"],
+                result["response_time"],
+                result["size"],
+                result["notes"]
+            ]
+            
+            # Add to table on EDT
+            try:
+                from javax.swing import SwingUtilities
+                SwingUtilities.invokeLater(lambda: self._bulkResultsTableModel.addRow(row_data))
+            except:
+                # Fallback: add directly
+                self._bulkResultsTableModel.addRow(row_data)
+            
+        except Exception as e:
+            self._callbacks.printError("Error adding result to table: " + str(e))
+    
+    def _updateBulkProgress(self, progress, completed, total):
+        """Update bulk testing progress on EDT"""
+        try:
+            self._bulkProgressBar.setValue(progress)
+            
+            # Show current status including pause/resume info
+            if hasattr(self, '_bulkTestingPaused') and self._bulkTestingPaused:
+                self._bulkProgressBar.setString("PAUSED: {}/{} ({}%)".format(completed, total, progress))
+            else:
+                self._bulkProgressBar.setString("{}/{} ({}%)".format(completed, total, progress))
+            
+            self._bulkStatusLabel.setText("Testing... {}/{} completed".format(completed, total))
+        except Exception as e:
+            self._callbacks.printError("Error updating progress: " + str(e))
+    
+    def _bulkTestingCompleted(self):
+        """Handle bulk testing completion"""
+        try:
+            self._bulkTestingActive = False
+            self._bulkTestingPaused = False
+            self._bulkProgressBar.setString("Completed")
+            self._bulkStatusLabel.setText("Testing completed")
+            self._bulkStatusLabel.setForeground(Color(76, 175, 80))
+            
+            # Update summary
+            total = len(self._bulkResults)
+            success_count = len([r for r in self._bulkResults if r["status"] == "Success"])
+            error_count = len([r for r in self._bulkResults if r["status"] == "Error"])
+            
+            summary = "Completed: {} endpoints tested. Success: {}, Errors: {}".format(total, success_count, error_count)
+            self._bulkSummaryLabel.setText(summary)
+            
+            # Update button states
+            self._updateBulkTestingButtonStates()
+            
+            # Enable export button since we now have results
+            if hasattr(self, '_exportButton'):
+                self._exportButton.setEnabled(True)
+                
+            # Update summary to show export availability
+            self._updateBulkSummary()
+            
+        except Exception as e:
+            self._callbacks.printError("Error in completion handler: " + str(e))
+    
+    def _exportBulkResults(self, event):
+        """Export bulk testing results to files in chunks"""
+        try:
+            if not hasattr(self, '_bulkResults') or not self._bulkResults:
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "No results to export. Please run bulk testing first.",
+                    "No Results", JOptionPane.WARNING_MESSAGE)
+                return
+            
+            # Get chunk size
+            try:
+                chunk_size = int(self._exportChunkField.getText())
+                if chunk_size <= 0:
+                    raise ValueError("Chunk size must be positive")
+            except ValueError:
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "Please enter a valid chunk size (positive number).",
+                    "Invalid Chunk Size", JOptionPane.ERROR_MESSAGE)
+                return
+            
+            # Create file chooser for export directory
+            from javax.swing import JFileChooser
+            from java.io import File
+            
+            fileChooser = JFileChooser()
+            fileChooser.setDialogTitle("Select Export Directory")
+            fileChooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY)
+            
+            result = fileChooser.showOpenDialog(self._mainPanel)
+            if result != JFileChooser.APPROVE_OPTION:
+                return
+            
+            export_dir = fileChooser.getSelectedFile()
+            
+            # Get export type and status filter
+            export_type = self._exportTypeCombo.getSelectedItem()
+            status_filter = self._statusFilterField.getText().strip()
+            
+            # Parse status filter (e.g., "200,401,503" or "200, 401, 503")
+            status_codes = set()
+            if status_filter:
+                for code in status_filter.replace(" ", "").split(","):
+                    if code.isdigit():
+                        status_codes.add(int(code))
+            
+            # Filter results based on export type and status codes
+            filtered_results = []
+            for result in self._bulkResults:
+                # Apply status code filter if specified
+                if status_codes:
+                    response_code = result.get("response_code", "")
+                    if isinstance(response_code, str) and response_code.isdigit():
+                        if int(response_code) not in status_codes:
+                            continue
+                    elif response_code not in status_codes:
+                        continue
+                
+                filtered_results.append(result)
+            
+            # Group by unique API paths first
+            unique_paths = set()
+            path_results = {}
+            
+            for result in filtered_results:
+                path = result.get("path", "")
+                if path:
+                    unique_paths.add(path)
+                    if path not in path_results:
+                        path_results[path] = []
+                    path_results[path].append(result)
+            
+            # Sort unique paths
+            sorted_paths = sorted(unique_paths)
+            total_unique_paths = len(sorted_paths)
+            
+            # Group unique paths by chunks
+            total_files = (total_unique_paths + chunk_size - 1) // chunk_size  # Ceiling division
+            
+            exported_files = []
+            
+            for file_index in range(total_files):
+                start_idx = file_index * chunk_size
+                end_idx = min(start_idx + chunk_size, total_unique_paths)
+                chunk_paths = sorted_paths[start_idx:end_idx]
+                
+                # Get all results for these paths
+                chunk_results = []
+                for path in chunk_paths:
+                    chunk_results.extend(path_results[path])
+                
+                # Create filename with base URL
+                base_url = self._baseUrlField.getText() if hasattr(self, '_baseUrlField') else "unknown"
+                if base_url:
+                    # Clean the base URL for filename (remove protocol, replace special chars)
+                    clean_base = base_url.replace("https://", "").replace("http://", "").replace("://", "")
+                    clean_base = clean_base.replace("/", "_").replace(":", "_").replace(".", "_")
+                    if clean_base.endswith("_"):
+                        clean_base = clean_base[:-1]
+                    filename = "{}_chunk_{:02d}_of_{:02d}.txt".format(clean_base, file_index + 1, total_files)
+                else:
+                    filename = "bulk_testing_chunk_{:02d}_of_{:02d}.txt".format(file_index + 1, total_files)
+                file_path = File(export_dir, filename)
+                
+                                # Write chunk to file with UTF-8 encoding for better Unicode support
+                # Write chunk to file (Jython compatible)
+                with open(str(file_path), 'w') as f:
+                    f.write("BULK TESTING RESULTS - CHUNK {} OF {}\n".format(file_index + 1, total_files))
+                    f.write("=" * 80 + "\n\n")
+                    
+                    # Write export metadata
+                    f.write("EXPORT METADATA:\n")
+                    f.write("-" * 40 + "\n")
+                    f.write("Export Date: {}\n".format(time.strftime("%Y-%m-%d %H:%M:%S")))
+                    f.write("Export Type: {}\n".format(export_type))
+                    if status_filter:
+                        f.write("Status Filter: {}\n".format(status_filter))
+                    f.write("Unique API Paths in Chunk: {}\n".format(len(chunk_paths)))
+                    f.write("Total HTTP Requests in Chunk: {}\n".format(len(chunk_results)))
+                    f.write("Chunk Size Setting: {} (unique paths)\n".format(chunk_size))
+                    f.write("\n")
+                    
+                    # List all APIs in this chunk with HTTP methods
+                    f.write("APIs in this chunk:\n")
+                    f.write("-" * 40 + "\n")
+                    
+                    # Group by path and collect HTTP methods
+                    path_methods = {}
+                    for result in chunk_results:
+                        path = result.get("path", "")
+                        method = result.get("method", "")
+                        if path and method:
+                            if path not in path_methods:
+                                path_methods[path] = set()
+                            path_methods[path].add(method)
+                    
+                    # Sort paths and display with methods in straight column format
+                    for path in sorted(path_methods.keys()):
+                        methods = sorted(path_methods[path])
+                        methods_str = ",".join(methods)
+                        # Use consistent spacing for straight column alignment
+                        f.write("{:<25} {}\n".format(methods_str, path))
+                    f.write("\n")
+                    
+                    # Write detailed results
+                    f.write("DETAILED RESULTS:\n")
+                    f.write("=" * 80 + "\n\n")
+                    
+                    for i, result in enumerate(chunk_results, 1):
+                        f.write("Result {} of {} in this chunk:\n".format(i, len(chunk_results)))
+                        f.write("-" * 50 + "\n")
+                        
+                        # Basic info
+                        f.write("Method: {}\n".format(result.get("method", "N/A")))
+                        f.write("Path: {}\n".format(result.get("path", "N/A")))
+                        f.write("Status: {}\n".format(result.get("status", "N/A")))
+                        f.write("Response Code: {}\n".format(result.get("response_code", "N/A")))
+                        f.write("Response Time: {} ms\n".format(result.get("response_time", "N/A")))
+                        f.write("Response Size: {} bytes\n".format(result.get("response_size", "N/A")))
+                        f.write("Notes: {}\n".format(result.get("notes", "N/A")))
+                        f.write("\n")
+                        
+                        # HTTP Request
+                        if "request" in result:
+                            f.write("HTTP REQUEST:\n")
+                            f.write("-" * 30 + "\n")
+                            try:
+                                # Write request with proper encoding handling
+                                request_text = result["request"]
+                                if isinstance(request_text, str):
+                                    # Try to write as-is first, fallback to safe encoding if needed
+                                    try:
+                                        f.write(request_text)
+                                    except UnicodeEncodeError:
+                                        # If Unicode fails, try UTF-8 encoding
+                                        safe_text = request_text.encode('utf-8', errors='replace').decode('utf-8')
+                                        f.write(safe_text)
+                                else:
+                                    f.write(str(request_text))
+                            except Exception as e:
+                                # Last resort: write raw bytes representation
+                                f.write("Raw request data: " + repr(request_text))
+                            f.write("\n\n")
+                        
+                        # HTTP Response
+                        if "response" in result:
+                            f.write("HTTP RESPONSE:\n")
+                            f.write("-" * 30 + "\n")
+                            try:
+                                # Write response with proper encoding handling
+                                response_text = result["response"]
+                                if isinstance(response_text, str):
+                                    # Try to write as-is first, fallback to safe encoding if needed
+                                    try:
+                                        f.write(response_text)
+                                    except UnicodeEncodeError:
+                                        # If Unicode fails, try UTF-8 encoding
+                                        safe_text = response_text.encode('utf-8', errors='replace').decode('utf-8')
+                                        f.write(safe_text)
+                                else:
+                                    f.write(str(response_text))
+                            except Exception as e:
+                                # Last resort: write raw bytes representation
+                                f.write("Raw response data: " + repr(response_text))
+                            f.write("\n\n")
+                        
+                        f.write("=" * 80 + "\n\n")
+                
+                exported_files.append(filename)
+            
+            # Show success message
+            message = "Successfully exported {} unique API paths ({} total requests) to {} files:\n\n".format(total_unique_paths, len(self._bulkResults), total_files)
+            for filename in exported_files:
+                message += "• {}\n".format(filename)
+            message += "\nExport directory: {}".format(export_dir.getAbsolutePath())
+            
+            JOptionPane.showMessageDialog(self._mainPanel, message,
+                "Export Successful", JOptionPane.INFORMATION_MESSAGE)
+            
+        except Exception as e:
+            self._callbacks.printError("Error exporting results: " + str(e))
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "Error exporting results: " + str(e),
+                "Export Error", JOptionPane.ERROR_MESSAGE)
+    
+    def _updateBulkSummary(self):
+        """Update the bulk testing summary with current status"""
+        try:
+            if not hasattr(self, '_bulkResults') or not self._bulkResults:
+                self._bulkSummaryLabel.setText("No results yet")
+                return
+            
+            total = len(self._bulkResults)
+            success_count = len([r for r in self._bulkResults if r["status"] == "Success"])
+            error_count = len([r for r in self._bulkResults if r["status"] == "Error"])
+            
+            if hasattr(self, '_bulkTestingPaused') and self._bulkTestingPaused:
+                summary = "PAUSED: {} endpoints tested. Success: {}, Errors: {}".format(total, success_count, error_count)
+            elif hasattr(self, '_bulkTestingStopped') and self._bulkTestingStopped:
+                summary = "STOPPED: {} endpoints tested. Success: {}, Errors: {}".format(total, success_count, error_count)
+            else:
+                summary = "Testing: {} endpoints tested. Success: {}, Errors: {}".format(total, success_count, error_count)
+            
+            self._bulkSummaryLabel.setText(summary)
+            
+        except Exception as e:
+            self._callbacks.printError("Error updating summary: " + str(e))
+    
+    def _updateBulkTestingEndpoints(self):
+        """Update the bulk testing endpoints list when endpoints are loaded"""
+        try:
+            if hasattr(self, '_bulkEndpointListModel') and hasattr(self, 'endpoints'):
+                self._bulkEndpointListModel.clear()
+                
+                for endpoint in self.endpoints:
+                    endpoint_text = endpoint["method"] + " " + endpoint["path"]
+                    self._bulkEndpointListModel.addElement(endpoint_text)
+                
+                # Update endpoint count label
+                count = len(self.endpoints)
+                if count == 0:
+                    self._bulkEndpointCountLabel.setText("No endpoints loaded")
+                elif count == 1:
+                    self._bulkEndpointCountLabel.setText("1 endpoint loaded")
+                else:
+                    self._bulkEndpointCountLabel.setText(str(count) + " endpoints loaded")
+                
+        except Exception as e:
+            self._callbacks.printError("Error updating bulk testing endpoints: " + str(e))
+    
+    def _createBulkResultsMouseListener(self):
+        """Create mouse listener for bulk results table context menu"""
+        class BulkResultsMouseListener(MouseAdapter):
+            def __init__(self, extender):
+                self.extender = extender
+            
+            def mousePressed(self, event):
+                if event.isPopupTrigger():
+                    self._showContextMenu(event)
+            
+            def mouseReleased(self, event):
+                if event.isPopupTrigger():
+                    self._showContextMenu(event)
+            
+            def _showContextMenu(self, event):
+                # Get selected row
+                row = self.extender._bulkResultsTable.rowAtPoint(event.getPoint())
+                if row >= 0:
+                    self.extender._bulkResultsTable.setRowSelectionInterval(row, row)
+                    
+                    # Create context menu
+                    popup = JPopupMenu()
+                    
+                    # Get endpoint details from the selected row
+                    method = self.extender._bulkResultsTable.getValueAt(row, 1)
+                    path = self.extender._bulkResultsTable.getValueAt(row, 2)
+                    
+                    # Find the original endpoint
+                    endpoint = None
+                    for ep in self.extender.endpoints:
+                        if ep["method"] == method and ep["path"] == path:
+                            endpoint = ep
+                            break
+                    
+                    if endpoint:
+                        # Send to Repeater
+                        repeaterItem = JMenuItem("Send to Repeater")
+                        repeaterItem.addActionListener(lambda e: self.extender._sendEndpointToRepeater(endpoint))
+                        popup.add(repeaterItem)
+                        
+                        # Send to Intruder
+                        intruderItem = JMenuItem("Send to Intruder")
+                        intruderItem.addActionListener(lambda e: self.extender._sendEndpointToIntruder(endpoint))
+                        popup.add(intruderItem)
+                        
+                        # Send to Scanner
+                        scannerItem = JMenuItem("Send to Scanner")
+                        scannerItem.addActionListener(lambda e: self.extender._sendEndpointToScanner(endpoint))
+                        popup.add(scannerItem)
+                        
+                        popup.addSeparator()
+                        
+                        # Copy URL
+                        copyUrlItem = JMenuItem("Copy URL")
+                        copyUrlItem.addActionListener(lambda e: self.extender._sendEndpointToRepeater(endpoint))
+                        popup.add(copyUrlItem)
+                        
+                        # Copy as curl
+                        copyCurlItem = JMenuItem("Copy as curl")
+                        copyCurlItem.addActionListener(lambda e: self.extender._sendEndpointToRepeater(endpoint))
+                        popup.add(copyCurlItem)
+                    
+                    # Show popup
+                    popup.show(event.getComponent(), event.getX(), event.getY())
+        
+        return BulkResultsMouseListener(self)
+    
+    def _createBulkEndpointSelectionListener(self):
+        """Create list selection listener for bulk testing endpoints list"""
+        class BulkEndpointSelectionListener(ListSelectionListener):
+            def __init__(self, extender):
+                self.extender = extender
+            
+            def valueChanged(self, event):
+                if not event.getValueIsAdjusting():
+                    # Get selected endpoint
+                    selected_index = self.extender._bulkEndpointList.getSelectedIndex()
+                    if selected_index >= 0:
+                        endpoint = self.extender._bulkEndpointListModel.getElementAt(selected_index)
+                        # You can add endpoint details display here if needed
+                        pass
+        
+        return BulkEndpointSelectionListener(self)
+    
+    def _sendEndpointToRepeater(self, endpoint):
+        """Send a specific endpoint to Repeater"""
+        try:
+            # Set the current endpoint in the tester tab
+            self.current_endpoint = endpoint
+            self._loadEndpointDetails()
+            
+            # Switch to API Tester tab
+            self._tabbedPane.setSelectedIndex(1)
+            
+            # Send to Repeater
+            self._sendToRepeater()
+            
+        except Exception as e:
+            self._callbacks.printError("Error sending endpoint to Repeater: " + str(e))
+    
+    def _sendEndpointToIntruder(self, endpoint):
+        """Send a specific endpoint to Intruder"""
+        try:
+            # Set the current endpoint in the tester tab
+            self.current_endpoint = endpoint
+            self._tabbedPane.setSelectedIndex(1)
+            
+            # Send to Intruder
+            self._sendToIntruder()
+            
+        except Exception as e:
+            self._callbacks.printError("Error sending endpoint to Intruder: " + str(e))
+    
+    def _sendEndpointToScanner(self, endpoint):
+        """Send a specific endpoint to Scanner"""
+        try:
+            # Set the current endpoint in the tester tab
+            self.current_endpoint = endpoint
+            self._loadEndpointDetails()
+            
+            # Switch to API Tester tab
+            self._tabbedPane.setSelectedIndex(1)
+            
+            # Send to Scanner
+            self._sendToScanner()
+            
+        except Exception as e:
+            self._callbacks.printError("Error sending endpoint to Scanner: " + str(e))
+    
+    def _copyEndpointUrl(self, endpoint):
+        """Copy endpoint URL to clipboard"""
+        try:
+            base_url = self._baseUrlField.getText() if hasattr(self, '_baseUrlField') else ""
+            if not base_url:
+                base_url = "http://localhost"
+            
+            full_url = base_url.rstrip('/') + '/' + endpoint["path"].lstrip('/')
+            
+            from java.awt.datatransfer import StringSelection
+            from java.awt import Toolkit
+            
+            selection = StringSelection(full_url)
+            clipboard = Toolkit.getDefaultToolkit().getSystemClipboard()
+            clipboard.setContents(selection, None)
+            
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "URL copied to clipboard",
+                "Success", JOptionPane.INFORMATION_MESSAGE)
+                
+        except Exception as e:
+            self._callbacks.printError("Error copying URL: " + str(e))
+    
+    def _copyEndpointAsCurl(self, endpoint):
+        """Copy endpoint as curl command"""
+        try:
+            method = endpoint["method"]
+            path = endpoint["path"]
+            
+            # Get base URL
+            base_url = self._baseUrlField.getText() if hasattr(self, '_baseUrlField') else ""
+            if not base_url:
+                base_url = "http://localhost"
+            
+            full_url = base_url.rstrip('/') + '/' + path.lstrip('/')
+            
+            # Build curl command
+            curl_cmd = "curl"
+            
+            # Add method
+            if method != "GET":
+                curl_cmd += " -X " + method
+            
+            # Add headers
+            headers = self._buildEndpointHeaders(endpoint)
+            for name, value in headers.items():
+                curl_cmd += " -H '" + str(name) + ": " + str(value) + "'"
+            
+            # Add body
+            if method in ["POST", "PUT", "PATCH"]:
+                body = self._buildEndpointBody(endpoint)
+                if body and body != "{}":
+                    # Escape single quotes in body
+                    escaped_body = body.replace("'", "'\"'\"'")
+                    curl_cmd += " -d '" + escaped_body + "'"
+            
+            # Add URL
+            curl_cmd += " '" + full_url + "'"
+            
+            # Copy to clipboard
+            from java.awt.datatransfer import StringSelection
+            from java.awt import Toolkit
+            
+            selection = StringSelection(curl_cmd)
+            clipboard = Toolkit.getDefaultToolkit().getSystemClipboard()
+            clipboard.setContents(False)
+            
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "curl command copied to clipboard",
+                "Success", JOptionPane.INFORMATION_MESSAGE)
+            
+        except Exception as e:
+            self._callbacks.printError("Error copying as curl: " + str(e))
+    
+    def _buildEndpointHeaders(self, endpoint):
+        """Build headers for a specific endpoint"""
+        try:
+            headers = {}
+            details = endpoint.get("details", {})
+            parameters = details.get("parameters", [])
+            
+            # Step 1: Add headers from Swagger spec parameters
+            for param in parameters:
+                if param.get("in") == "header":
+                    name = param.get("name", "")
+                    value = param.get("default", "")
+                    if name and value:
+                        headers[name] = value
+            
+            # Step 2: Add authentication headers
+            if hasattr(self, 'auth_profiles') and self.auth_profiles:
+                for profile in self.auth_profiles:
+                    if profile.get("enabled", False):
+                        auth_type = profile.get("type")
+                        if auth_type == "Bearer Token":
+                            headers["Authorization"] = "Bearer " + profile.get("value", "")
+                        elif auth_type == "Basic Auth":
+                            import base64
+                            credentials = profile.get("username", "") + ":" + profile.get("password", "")
+                            encoded = base64.b64encode(credentials.encode()).decode()
+                            headers["Authorization"] = "Basic " + encoded
+                        elif auth_type == "Custom Header":
+                            headers[profile.get("key", "")] = profile.get("value", "")
+            
+            # Step 3: Add global custom headers (these can override spec and auth headers)
+            if hasattr(self, 'custom_headers'):
+                for header in self.custom_headers:
+                    if header.get("enabled", False):
+                        name = header.get("name", "")
+                        value = header.get("value", "")
+                        if name and value:
+                            headers[name] = value
+            
+            # Step 4: Apply header overrides (these take final precedence)
+            if hasattr(self, 'header_overrides'):
+                for override in self.header_overrides:
+                    if override and override.get("enabled", False):
+                        name = override.get("name", "")
+                        value = override.get("value", "")
+                        if name and value:
+                            headers[name] = value
+            
+            return headers
+        except Exception as e:
+            self._callbacks.printError("Error building endpoint headers: " + str(e))
+            return {}
+    
+    def _buildEndpointBody(self, endpoint):
+        """Build body for a specific endpoint"""
+        try:
+            method = endpoint["method"]
+            if method not in ["POST", "PUT", "PATCH"]:
+                return ""
+            
+            details = endpoint.get("details", {})
+            parameters = details.get("parameters", [])
+            
+            # Check for body parameter
+            for param in parameters:
+                if param.get("in") == "body":
+                    schema = param.get("schema", {})
+                    if schema:
+                        return self._generateComprehensiveExample(schema)
+            
+            # Check for form data
+            form_params = []
+            for param in parameters:
+                if param.get("in") == "formData":
+                    name = param.get("name", "")
+                    param_type = param.get("type", "string")
+                    example = self._generateExample({"type": param_type})
+                    form_params.append("{}={}".format(name, example))
+            
+            if form_params:
+                return "&".join(form_params)
+            
+            return "{}"
+        except Exception as e:
+            self._callbacks.printError("Error building endpoint body: " + str(e))
+            return "{}"
+    
+    def _createBulkTestingTab(self):
+        """Create the bulk testing tab for testing all APIs sequentially"""
+        panel = JPanel(BorderLayout())
+        
+        # Top panel for controls
+        topPanel = JPanel()
+        topPanel.setBorder(BorderFactory.createTitledBorder("Bulk Testing Controls"))
+        layout = GroupLayout(topPanel)
+        topPanel.setLayout(layout)
+        layout.setAutoCreateGaps(True)
+        layout.setAutoCreateContainerGaps(True)
+        
+        # Components
+        self._startBulkButton = JButton("Start Bulk Testing", actionPerformed=self._startBulkTesting)
+        self._startBulkButton.setBackground(Color(76, 175, 80))  # Green
+        self._startBulkButton.setForeground(Color.WHITE)
+        self._startBulkButton.setPreferredSize(Dimension(150, 30))
+        self._startBulkButton.setToolTipText("Start testing all endpoints sequentially")
+        
+        self._pauseBulkButton = JButton("Pause", actionPerformed=self._pauseBulkTesting)
+        self._pauseBulkButton.setBackground(Color(255, 152, 0))  # Orange
+        self._pauseBulkButton.setForeground(Color.WHITE)
+        self._pauseBulkButton.setPreferredSize(Dimension(100, 30))
+        self._pauseBulkButton.setEnabled(False)  # Initially disabled
+        self._pauseBulkButton.setToolTipText("Pause testing - can be resumed later")
+        
+        self._resumeBulkButton = JButton("Resume", actionPerformed=self._resumeBulkTesting)
+        self._resumeBulkButton.setBackground(Color(33, 150, 243))  # Blue
+        self._resumeBulkButton.setForeground(Color.WHITE)
+        self._resumeBulkButton.setPreferredSize(Dimension(100, 30))
+        self._resumeBulkButton.setEnabled(False)  # Initially disabled
+        self._resumeBulkButton.setToolTipText("Resume testing from where it was paused")
+        
+        self._stopBulkButton = JButton("Stop", actionPerformed=self._stopBulkTesting)
+        self._stopBulkButton.setBackground(Color(244, 67, 54))  # Red
+        self._stopBulkButton.setForeground(Color.WHITE)
+        self._stopBulkButton.setPreferredSize(Dimension(100, 30))
+        self._stopBulkButton.setEnabled(False)  # Initially disabled
+        self._stopBulkButton.setToolTipText("Stop testing completely - cannot be resumed")
+        
+        self._restartBulkButton = JButton("Restart", actionPerformed=self._restartBulkTesting)
+        self._restartBulkButton.setBackground(Color(156, 39, 176))  # Purple
+        self._restartBulkButton.setForeground(Color.WHITE)
+        self._restartBulkButton.setPreferredSize(Dimension(100, 30))
+        self._restartBulkButton.setToolTipText("Restart testing from the beginning")
+        
+        clearButton = JButton("Clear Results", actionPerformed=self._clearBulkResults)
+        clearButton.setBackground(Color.WHITE)
+        clearButton.setForeground(Color.BLACK)
+        clearButton.setPreferredSize(Dimension(120, 30))
+        clearButton.setToolTipText("Clear all testing results and reset progress")
+        
+        # Progress panel
+        progressPanel = JPanel()
+        progressLayout = GroupLayout(progressPanel)
+        progressPanel.setLayout(progressLayout)
+        progressLayout.setAutoCreateGaps(True)
+        progressLayout.setAutoCreateContainerGaps(True)
+        
+        progressLabel = JLabel("Progress:")
+        self._bulkProgressBar = JProgressBar(0, 100)
+        self._bulkProgressBar.setStringPainted(True)
+        self._bulkProgressBar.setString("Ready")
+        
+        self._bulkStatusLabel = JLabel("No testing started")
+        self._bulkStatusLabel.setForeground(Color(100, 100, 100))
+        
+        progressLayout.setHorizontalGroup(
+            progressLayout.createSequentialGroup()
+                .addComponent(progressLabel)
+                .addComponent(self._bulkProgressBar)
+                .addComponent(self._bulkStatusLabel)
+        )
+        
+        progressLayout.setVerticalGroup(
+            progressLayout.createParallelGroup(GroupLayout.Alignment.BASELINE)
+                .addComponent(progressLabel)
+                .addComponent(self._bulkProgressBar)
+                .addComponent(self._bulkStatusLabel)
+        )
+        
+        # Options panel
+        optionsPanel = JPanel()
+        optionsLayout = GroupLayout(optionsPanel)
+        optionsPanel.setLayout(optionsLayout)
+        optionsLayout.setAutoCreateGaps(True)
+        optionsLayout.setAutoCreateContainerGaps(True)
+        
+        delayLabel = JLabel("Delay between requests (ms):")
+        self._bulkDelayField = JTextField("1000", 10)
+        self._bulkDelayField.setToolTipText("Delay between consecutive requests to avoid overwhelming the server")
+        
+        timeoutLabel = JLabel("Request timeout (ms):")
+        self._bulkTimeoutField = JTextField("10000", 10)
+        self._bulkTimeoutField.setToolTipText("Timeout for each individual request")
+        
+        optionsLayout.setHorizontalGroup(
+            optionsLayout.createSequentialGroup()
+                .addComponent(delayLabel)
+                .addComponent(self._bulkDelayField)
+                .addComponent(timeoutLabel)
+                .addComponent(self._bulkTimeoutField)
+        )
+        
+        optionsLayout.setVerticalGroup(
+            optionsLayout.createParallelGroup(GroupLayout.Alignment.BASELINE)
+                .addComponent(delayLabel)
+                .addComponent(self._bulkDelayField)
+                .addComponent(timeoutLabel)
+                .addComponent(self._bulkTimeoutField)
+        )
+        
+        # Top panel layout - Use GroupLayout for proper organization
+        topLayout = GroupLayout(topPanel)
+        topPanel.setLayout(topLayout)
+        topLayout.setAutoCreateGaps(True)
+        topLayout.setAutoCreateContainerGaps(True)
+        
+        # Create a button panel for the control buttons
+        buttonPanel = JPanel(FlowLayout(FlowLayout.LEFT))
+        buttonPanel.add(self._startBulkButton)
+        buttonPanel.add(self._pauseBulkButton)
+        buttonPanel.add(self._resumeBulkButton)
+        buttonPanel.add(self._stopBulkButton)
+        buttonPanel.add(self._restartBulkButton)
+        buttonPanel.add(clearButton)
+        
+        # Layout the top panel with proper spacing
+        topLayout.setHorizontalGroup(
+            topLayout.createSequentialGroup()
+                .addComponent(buttonPanel)
+                .addComponent(progressPanel)
+                .addComponent(optionsPanel)
+        )
+        
+        topLayout.setVerticalGroup(
+            topLayout.createSequentialGroup()
+                .addComponent(buttonPanel)
+                .addComponent(progressPanel)
+                .addComponent(optionsPanel)
+        )
+        
+        # Center panel with split pane for endpoints and results
+        centerPanel = JPanel(BorderLayout())
+        
+        # Create split pane for left (endpoints) and right (results)
+        splitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT)
+        
+        # Left panel - Endpoints list (similar to API Tester tab)
+        leftPanel = JPanel(BorderLayout())
+        leftPanel.setBorder(BorderFactory.createTitledBorder("Endpoints to Test"))
+        leftPanel.setPreferredSize(Dimension(350, 600))
+        
+        # Endpoint count label
+        self._bulkEndpointCountLabel = JLabel("No endpoints loaded")
+        leftPanel.add(self._bulkEndpointCountLabel, BorderLayout.NORTH)
+        
+        # Endpoints list
+        self._bulkEndpointListModel = DefaultListModel()
+        self._bulkEndpointList = JList(self._bulkEndpointListModel)
+        self._bulkEndpointList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
+        
+        # Add selection listener to show endpoint details
+        self._bulkEndpointList.addListSelectionListener(self._createBulkEndpointSelectionListener())
+        
+        endpointScrollPane = JScrollPane(self._bulkEndpointList)
+        leftPanel.add(endpointScrollPane, BorderLayout.CENTER)
+        
+        # Right panel - Results table
+        rightPanel = JPanel(BorderLayout())
+        rightPanel.setBorder(BorderFactory.createTitledBorder("Bulk Testing Results"))
+        
+        # Results table with sorting capability
+        columns = ["Status", "Method", "Path", "Response Code", "Response Time", "Size", "Notes"]
+        self._bulkResultsTableModel = DefaultTableModel(columns, 0)
+        
+        # Create sortable table
+        self._bulkResultsTable = JTable(self._bulkResultsTableModel)
+        
+        # Set column widths
+        self._bulkResultsTable.getColumnModel().getColumn(0).setPreferredWidth(80)   # Status
+        self._bulkResultsTable.getColumnModel().getColumn(1).setPreferredWidth(80)   # Method
+        self._bulkResultsTable.getColumnModel().getColumn(2).setPreferredWidth(200)  # Path
+        self._bulkResultsTable.getColumnModel().getColumn(3).setPreferredWidth(100)  # Response Code
+        self._bulkResultsTable.getColumnModel().getColumn(4).setPreferredWidth(100)  # Response Time
+        self._bulkResultsTable.getColumnModel().getColumn(5).setPreferredWidth(80)   # Size
+        self._bulkResultsTable.getColumnModel().getColumn(6).setPreferredWidth(150)  # Notes
+        
+        # Make table non-editable
+        from java.lang import Object
+        self._bulkResultsTable.setDefaultEditor(Object, None)
+        
+        # Enable sorting for all columns
+        from javax.swing.table import TableRowSorter
+        sorter = TableRowSorter(self._bulkResultsTableModel)
+        self._bulkResultsTable.setRowSorter(sorter)
+        
+        # Add right-click context menu
+        self._bulkResultsTable.addMouseListener(self._createBulkResultsMouseListener())
+        
+        resultsScrollPane = JScrollPane(self._bulkResultsTable)
+        rightPanel.add(resultsScrollPane, BorderLayout.CENTER)
+        
+        # Add panels to split pane
+        splitPane.setLeftComponent(leftPanel)
+        splitPane.setRightComponent(rightPanel)
+        splitPane.setDividerLocation(350)
+        
+        centerPanel.add(splitPane, BorderLayout.CENTER)
+        
+        # Bottom panel for summary and export
+        bottomPanel = JPanel(BorderLayout())
+        bottomPanel.setBorder(BorderFactory.createTitledBorder("Summary & Export"))
+        
+        # Summary section
+        summaryPanel = JPanel()
+        summaryPanel.setLayout(FlowLayout(FlowLayout.LEFT))
+        self._bulkSummaryLabel = JLabel("No tests run yet")
+        self._bulkSummaryLabel.setForeground(Color(100, 100, 100))
+        summaryPanel.add(self._bulkSummaryLabel)
+        
+        # Export section with filtering options
+        exportPanel = JPanel()
+        exportPanel.setBorder(BorderFactory.createTitledBorder("Export Results"))
+        exportLayout = FlowLayout(FlowLayout.LEFT)
+        exportPanel.setLayout(exportLayout)
+        
+        # Export controls
+        chunkLabel = JLabel("Chunk Size:")
+        self._exportChunkField = JTextField("25", 5)
+        self._exportChunkField.setToolTipText("Number of API requests/responses per export file")
+        
+        # Export type selection
+        exportTypeLabel = JLabel("Export Type:")
+        self._exportTypeCombo = JComboBox(["Full Results", "API List Only", "Requests Only", "Responses Only"])
+        self._exportTypeCombo.setToolTipText("Choose what to export")
+        
+        # Status code filter
+        statusFilterLabel = JLabel("Status Filter:")
+        self._statusFilterField = JTextField("", 15)
+        self._statusFilterField.setToolTipText("Filter by status codes (e.g., 200,401,503 or leave empty for all)")
+        
+        self._exportButton = JButton("Export Results", actionPerformed=self._exportBulkResults)
+        self._exportButton.setBackground(Color(76, 175, 80))  # Green
+        self._exportButton.setForeground(Color.WHITE)
+        self._exportButton.setEnabled(False)  # Initially disabled until results exist
+        self._exportButton.setToolTipText("Export HTTP requests and responses to files")
+        
+        exportPanel.add(chunkLabel)
+        exportPanel.add(self._exportChunkField)
+        exportPanel.add(exportTypeLabel)
+        exportPanel.add(self._exportTypeCombo)
+        exportPanel.add(statusFilterLabel)
+        exportPanel.add(self._statusFilterField)
+        exportPanel.add(self._exportButton)
+        
+        # Add both panels to bottom panel
+        bottomPanel.add(summaryPanel, BorderLayout.NORTH)
+        bottomPanel.add(exportPanel, BorderLayout.CENTER)
+        
+        # Add panels to main panel
+        panel.add(topPanel, BorderLayout.NORTH)
+        panel.add(centerPanel, BorderLayout.CENTER)
+        panel.add(bottomPanel, BorderLayout.SOUTH)
+        
+        # Initialize bulk testing state
+        self._bulkTestingActive = False
+        self._bulkTestingPaused = False
+        self._bulkTestingStopped = False
+        self._bulkCurrentIndex = 0
+        self._bulkTestingThread = None
+        self._bulkResults = []
+        
+        # Initialize button states
+        self._updateBulkTestingButtonStates()
         
         return panel
         
@@ -1942,6 +3194,9 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         
         # Populate tag filter
         self._populateTagFilter()
+        
+        # Update bulk testing endpoints list
+        self._updateBulkTestingEndpoints()
     
     def _refreshEndpointList(self, event):
         """Refresh the endpoint list display"""
@@ -2868,7 +4123,15 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             # Add default headers if enabled
             if self._includeDefaultHeadersCheck.isSelected():
                 headers.append("User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36")
-                if not existing_accept:
+                
+                # Check if Accept header already exists before adding default
+                accept_exists = False
+                for header in headers:
+                    if header.lower().startswith("accept:"):
+                        accept_exists = True
+                        break
+                
+                if not accept_exists:
                     headers.append("Accept: */*")
                 
             # Build full request (only add body for methods that support it AND have body parameters)
@@ -4340,7 +5603,16 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             # Add default headers if enabled
             if self._includeDefaultHeadersCheck.isSelected():
                 headers.append("User-Agent: Swagger-API-Tester/1.0")
-                headers.append("Accept: */*")
+                
+                # Check if Accept header already exists before adding default
+                accept_exists = False
+                for header in headers:
+                    if header.lower().startswith("accept:"):
+                        accept_exists = True
+                        break
+                
+                if not accept_exists:
+                    headers.append("Accept: */*")
                 
             # Build full request
             if body and method in ["POST", "PUT", "PATCH"]:
