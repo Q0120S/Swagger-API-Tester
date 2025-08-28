@@ -1,20 +1,28 @@
 # 🔍 **Swagger API Tester - Burp Suite Extension**
 
-A comprehensive Burp Suite extension for parsing Swagger/OpenAPI specifications and testing API endpoints with a powerful, user-friendly interface.
+A comprehensive Burp Suite extension for parsing Swagger/OpenAPI specifications and testing API endpoints with advanced features including bulk testing, keyboard shortcuts, and seamless Burp integration.
 
 ## 🚀 **Features**
 
 ### **Core Functionality**
 - **Swagger/OpenAPI Parsing** - Support for JSON and YAML formats
 - **Interactive API Testing** - Repeater-like interface for endpoint testing
+- **Bulk Testing** - Test all endpoints automatically with configurable delays
 - **Parameter Management** - Dynamic path, query, and header parameter handling
 - **Authentication Support** - Bearer Token, API Key, Basic Auth, and Custom Headers
 - **Base URL Management** - Dynamic URL switching and environment variations
 
+### **Advanced Testing Features**
+- **Bulk Testing Tab** - Automatically test all endpoints sequentially
+- **Export Functionality** - Export test results in customizable chunks
+- **Status Code Filtering** - Filter export results by HTTP status codes
+- **Result Sorting** - Sort bulk testing results by any column
+- **Pause/Resume/Restart** - Control bulk testing execution
+
 ### **Burp Suite Integration**
 - **Context Menu Integration** - Right-click options throughout Burp Suite
 - **Tool Integration** - Send requests to Repeater, Intruder, Scanner, and Comparer
-- **Export Functionality** - Save requests as curl commands or files
+- **Keyboard Shortcuts** - Quick access to common actions
 - **Seamless Workflow** - Works alongside existing Burp tools
 
 ### **User Experience**
@@ -44,76 +52,150 @@ A comprehensive Burp Suite extension for parsing Swagger/OpenAPI specifications 
 
 ### **1. Load OpenAPI Specification**
 - Go to **"Import Swagger"** tab
-- Enter Swagger URL or load from file
+- Click **"Load from File"** and select your Swagger JSON/YAML file
+- Or enter Swagger URL and click **"Fetch from URL"**
 - View parsed endpoints in the table
 
-### **2. Test API Endpoints**
+### **2. Test Individual Endpoints**
 - Go to **"API Tester"** tab
 - Select endpoint from the organized list
 - Modify parameters and headers as needed
-- Click **"Send Request"**
+- Use **Ctrl+Space** (**⌃+Space**) to send request
 
-### **3. Advanced Testing**
-- Right-click requests for context menu options
-- Send to Burp tools (Repeater, Intruder, Scanner)
-- Export requests and responses
-- Customize themes and highlighting
-
----
-
-## 🎯 **Usage Examples**
-
-### **Basic API Testing**
-```
-1. Load OpenAPI spec from https://petstore.swagger.io/v2/swagger.json
-2. Select /pet/{petId} endpoint from the list
-3. Set petId parameter to "1"
-4. Click "Send Request"
-5. Review response and modify as needed
-```
-
-### **Authentication Testing**
-```
-1. Go to "Settings" tab
-2. Select authentication type (Bearer Token, API Key, etc.)
-3. Enter credentials
-4. Authentication headers are automatically applied to all requests
-```
-
-### **Parameter Management**
-```
-1. Select an endpoint with parameters
-2. Modify path, query, and header parameters
-3. Use "Update Request" to rebuild the request
-4. Send the modified request
-```
+### **3. Bulk Test All Endpoints**
+- Go to **"Bulk Testing"** tab
+- Configure delay and timeout settings
+- Click **"Start Bulk Testing"** to test all endpoints
+- Monitor progress and results in real-time
 
 ---
 
-## 🎨 **Interface Overview**
+## 🎯 **Detailed Usage Guide**
 
 ### **Import Swagger Tab**
-- **URL Input**: Enter Swagger/OpenAPI specification URLs
-- **File Upload**: Load specifications from local files
-- **Parsed Endpoints Table**: View all available endpoints
-- **Base URL Management**: Set and modify the base URL
-- **Specification Info**: Display API metadata and details
+
+#### **Loading Specifications**
+- **From File**: Click "Load from File" → Select JSON/YAML file → Automatic parsing
+- **From URL**: Enter Swagger URL → Click "Fetch from URL" → Automatic parsing
+- **File Validation**: Only accepts `.json`, `.yaml`, and `.yml` files
+- **Auto-Update**: All tabs update automatically after successful loading
+
+#### **Features**
+- **Parsed Endpoints Table**: Shows Method, Path, Tags, and Description
+- **Base URL Management**: Automatically extracts and displays base URL
+- **Specification Info**: Displays API metadata, version, and details
+- **Progress Tracking**: Shows loading progress and endpoint count
 
 ### **API Tester Tab**
-- **Endpoint List**: Organized list of all available endpoints
-- **Request Builder**: Method, URL, content-type, and body editor
-- **Parameter Management**: Path, query, and header parameters
-- **Response Viewer**: Display and analyze API responses
-- **Quick Actions**: Pretty print, minify, highlight, theme switching
+
+#### **Endpoint Selection**
+- **Organized List**: All endpoints displayed with method and path
+- **Search & Filter**: Find specific endpoints quickly
+- **Tag Filtering**: Filter by API tags/categories
+
+#### **Request Building**
+- **Method Selection**: GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD
+- **URL Construction**: Automatic path parameter substitution
+- **Parameter Management**: 
+  - **Path Parameters**: Required parameters in URL path
+  - **Query Parameters**: Optional parameters in URL query string
+  - **Header Parameters**: Custom headers for the request
+- **Body Content**: JSON/XML body for POST/PUT requests
+
+#### **Response Analysis**
+- **Status Code**: HTTP response status
+- **Response Headers**: All response headers displayed
+- **Response Body**: Formatted and syntax-highlighted
+- **Response Time**: Request execution time
+- **Size Information**: Response size in bytes
+
+#### **Quick Actions**
+- **Pretty Print**: Format JSON/XML responses
+- **Minify**: Compress response content
+- **Syntax Highlighting**: Color-coded content
+- **Theme Switching**: Burp theme or dark theme
+
+### **Bulk Testing Tab**
+
+#### **Configuration**
+- **Delay Setting**: Time between requests (milliseconds)
+- **Timeout Setting**: Maximum time to wait for each response
+- **Endpoint Selection**: Choose which endpoints to test
+
+#### **Execution Control**
+- **Start**: Begin bulk testing process
+- **Pause**: Temporarily pause testing
+- **Resume**: Continue from where you left off
+- **Stop**: Completely stop testing
+- **Restart**: Stop and restart from beginning
+- **Clear Results**: Clear all test results
+
+#### **Progress Monitoring**
+- **Progress Bar**: Visual indication of completion
+- **Status Display**: Current status (Running, Paused, Stopped)
+- **Endpoint Counter**: Shows current endpoint being tested
+- **Real-time Updates**: Live updates during execution
+
+#### **Results Management**
+- **Results Table**: Shows all test results with columns:
+  - Status (Success/Error)
+  - Method
+  - Path
+  - Response Code
+  - Response Time
+  - Size
+  - Notes
+- **Sorting**: Click any column header to sort results
+- **Context Menu**: Right-click for additional options
+
+#### **Export Functionality**
+- **Chunk Size**: Number of unique APIs per export file
+- **Export Types**:
+  - **Full Results**: Complete requests and responses
+  - **API List Only**: Just the list of APIs with methods
+  - **Requests Only**: Only the HTTP requests
+  - **Responses Only**: Only the HTTP responses
+- **Status Filtering**: Filter by specific HTTP status codes
+- **File Naming**: Automatic naming based on base URL
+- **Content Format**: Straight column format for API lists
 
 ### **Settings Tab**
-- **Authentication**: Bearer Token, API Key, Basic Auth, Custom Headers
-- **Global Headers**: Add custom headers for all requests
-- **Theme Selection**: Choose between Burp and dark themes
+
+#### **Authentication Profiles**
+- **Bearer Token**: Simple token-based authentication
+- **API Key**: Custom header name and value
+- **Basic Auth**: Username and password authentication
+- **Custom Headers**: User-defined authentication headers
+- **Profile Management**: Save, load, edit, and delete profiles
+
+#### **Global Headers**
+- **Header Override**: Set headers that override endpoint-specific ones
+- **Custom Headers**: Add headers for all requests
+- **Header Management**: Add, edit, and remove global headers
+
+#### **Theme Settings**
+- **Burp Theme**: Matches Burp Suite's default appearance
+- **Dark Theme**: Alternative dark color scheme
+- **Syntax Highlighting**: Color-coded request/response elements
 
 ---
 
-## 🔧 **Configuration**
+## ⌨️ **Keyboard Shortcuts**
+
+### **Request Actions**
+- **Ctrl+Space** (**⌃+Space**): Send request to API
+- **Ctrl+R** (**⌃+R**): Send request to Repeater
+- **Ctrl+I** (**⌃+I**): Send request to Intruder
+- **Ctrl+O** (**⌃+O**): Send request to Organizer/Scanner
+
+### **Usage Notes**
+- Shortcuts work when an endpoint is selected in API Tester tab
+- All shortcuts are configurable and reliable
+- Works with Windows/Linux/MacOS systems
+
+---
+
+## 🔧 **Configuration & Customization**
 
 ### **Base URL Management**
 - **Import Tab**: Set the primary base URL for the API
@@ -140,17 +222,20 @@ A comprehensive Burp Suite extension for parsing Swagger/OpenAPI specifications 
 - **Penetration Testing** - Systematic security testing of endpoints
 - **Authentication Testing** - Test various auth mechanisms
 - **Input Validation Testing** - Test parameter handling and validation
+- **Bulk Security Scanning** - Test all endpoints for common vulnerabilities
 
 ### **Development & QA**
 - **API Testing** - Functional testing of API endpoints
 - **Documentation Testing** - Verify API specification accuracy
 - **Integration Testing** - Test API interactions and workflows
 - **Performance Testing** - Test API response times and limits
+- **Regression Testing** - Ensure changes don't break existing functionality
 
 ### **Security Research**
 - **Vulnerability Research** - Discover new attack vectors
 - **Security Tool Development** - Build custom testing tools
 - **Security Training** - Learn API security testing techniques
+- **Compliance Testing** - Verify security requirements
 
 ---
 
@@ -172,28 +257,77 @@ A comprehensive Burp Suite extension for parsing Swagger/OpenAPI specifications 
 - **Burp Tool Integration** - Send requests to Repeater, Intruder, Scanner
 - **Context Menu Actions** - Right-click options throughout Burp Suite
 - **Export Functionality** - Save requests as curl commands or files
+- **Bulk Testing** - Comprehensive endpoint coverage
 
 ---
 
-## 🔮 **Future Roadmap**
+## 📊 **Export & Reporting**
 
-### **Short Term (1-3 months)**
-- [ ] **Enhanced Parameter Handling** - Better parameter type detection
-- [ ] **Request Templates** - Save and reuse request configurations
-- [ ] **Response Analysis** - Enhanced response parsing and validation
-- [ ] **Performance Improvements** - Faster endpoint parsing and loading
+### **Export Options**
+- **Chunked Export**: Split large results into manageable files
+- **Status Filtering**: Export only specific HTTP status codes
+- **Content Selection**: Choose what to export (requests, responses, or both)
+- **File Naming**: Automatic naming based on base URL and chunk number
 
-### **Medium Term (3-6 months)**
-- [ ] **Test Collections** - Organize and manage test scenarios
-- [ ] **Automated Testing** - Basic automated test execution
-- [ ] **Reporting Features** - Generate test reports and summaries
-- [ ] **Advanced Authentication** - OAuth, JWT, and other auth schemes
+### **Export Formats**
+- **API List**: Clean, organized list of endpoints with HTTP methods
+- **Request Details**: Complete HTTP requests with headers and body
+- **Response Details**: Complete HTTP responses with status and content
+- **Metadata**: Export information including date, filter settings, and counts
 
-### **Long Term (6+ months)**
-- [ ] **Multi-API Support** - Test multiple APIs simultaneously
-- [ ] **Advanced Analytics** - Testing metrics and performance analysis
-- [ ] **Collaborative Testing** - Team-based testing workflows
-- [ ] **Enterprise Features** - Role-based access, audit logging
+---
+
+## 🔮 **Advanced Features**
+
+### **Bulk Testing Capabilities**
+- **Sequential Execution**: Test endpoints one by one with configurable delays
+- **State Management**: Pause, resume, and restart testing at any time
+- **Progress Tracking**: Real-time progress updates and status information
+- **Result Analysis**: Comprehensive results with sorting and filtering
+- **Export Management**: Flexible export options for analysis and reporting
+
+### **Parameter Handling**
+- **Dynamic Parameter Detection**: Automatically detect required and optional parameters
+- **Parameter Merging**: Combine path-level and method-level parameters
+- **Type Support**: Handle various parameter types (string, integer, boolean, array)
+- **Example Generation**: Generate realistic example values for testing
+
+### **Header Management**
+- **Smart Header Override**: Global headers properly override endpoint-specific ones
+- **Content-Type Handling**: Automatic content-type detection and setting
+- **Authentication Headers**: Automatic inclusion of authentication headers
+- **Custom Header Support**: Add any custom headers needed for testing
+
+---
+
+## 🚨 **Troubleshooting**
+
+### **Common Issues**
+
+#### **File Loading Problems**
+- **Issue**: "0 endpoints loaded" after file selection
+- **Solution**: Ensure file is valid JSON/YAML Swagger specification
+- **Check**: File extension (.json, .yaml, .yml) and content format
+
+#### **Bulk Testing Issues**
+- **Issue**: Bulk testing buttons not visible
+- **Solution**: Check if endpoints are loaded first
+- **Check**: Ensure bulk testing tab is properly initialized
+
+#### **Keyboard Shortcuts Not Working**
+- **Issue**: Shortcuts don't respond
+- **Solution**: Ensure endpoint is selected in API Tester tab
+- **Check**: Verify shortcuts are properly configured
+
+#### **Export Failures**
+- **Issue**: Export creates empty files
+- **Solution**: Ensure bulk testing has completed with results
+- **Check**: Verify chunk size and filter settings
+
+### **Debug Information**
+- **Console Output**: Check Burp Suite console for detailed logs
+- **Error Messages**: Look for specific error popups
+- **Status Indicators**: Monitor progress bars and status labels
 
 ---
 
@@ -203,17 +337,19 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-## 🎉 **Get Started Today**
+## 🔗 **Support & Community**
 
-Transform your API testing workflow with **comprehensive Swagger support** and **seamless Burp integration**:
+### **Getting Help**
+- **Documentation**: This README provides comprehensive usage information
+- **Console Logs**: Check Burp Suite console for detailed operation logs
+- **Error Messages**: Look for specific error popups with troubleshooting hints
 
-1. **Install the extension** in Burp Suite
-2. **Load your Swagger specification** (JSON or YAML)
-3. **Start testing endpoints** with the intuitive interface
-4. **Integrate with Burp tools** for advanced testing
-
-**🚀 Start testing your APIs with professional-grade tools!**
+### **Feature Requests**
+- **Bulk Testing**: Already implemented with pause/resume/restart
+- **Export Functionality**: Already implemented with flexible options
+- **Keyboard Shortcuts**: Already implemented for quick access
+- **Advanced Authentication**: Already implemented with profile management
 
 ---
 
-*This extension transforms Burp Suite into a **powerful API testing platform**, providing comprehensive Swagger/OpenAPI support with seamless integration into your existing security testing workflow.*
+*This extension transforms Burp Suite into a **powerful API testing platform**, providing comprehensive Swagger/OpenAPI support with advanced bulk testing capabilities, seamless integration into your existing security testing workflow, and professional-grade export and reporting features.*

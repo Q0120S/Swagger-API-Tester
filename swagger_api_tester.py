@@ -2980,6 +2980,11 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             self._progressBar.setIndeterminate(False)
             self._progressBar.setString("Successfully loaded " + str(len(self.endpoints)) + " endpoints")
             
+            # Update base URL field if it exists
+            if hasattr(self, '_baseUrlField'):
+                self._baseUrlField.setText(self.base_url)
+                self._callbacks.printOutput("Updated base URL field: " + self.base_url)
+            
             # Force UI updates
             self._callbacks.printOutput("Swagger spec loaded successfully. Forcing UI updates...")
             
@@ -2994,6 +2999,16 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                 self._endpointsTable.revalidate()
                 self._endpointsTable.repaint()
                 self._callbacks.printOutput("Forced endpoints table UI update")
+            
+            # Force bulk testing tab updates
+            if hasattr(self, '_bulkEndpointListModel'):
+                self._updateBulkTestingEndpoints()
+                self._callbacks.printOutput("Updated bulk testing endpoints")
+            
+            # Show success message
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "Successfully loaded " + str(len(self.endpoints)) + " endpoints from " + source_url,
+                "Load Successful", JOptionPane.INFORMATION_MESSAGE)
             
         except Exception as e:
             self._progressBar.setIndeterminate(False)
@@ -3116,87 +3131,112 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         
     def _parseEndpoints(self):
         """Parse endpoints from swagger spec"""
-        self.endpoints = []
-        self._endpointsTableModel.setRowCount(0)
-        self._endpointListModel.clear()
-        
-        if not self.swagger_spec or "paths" not in self.swagger_spec:
-            self._callbacks.printOutput("No swagger spec or paths found")
-            return
+        try:
+            self.endpoints = []
+            self._endpointsTableModel.setRowCount(0)
+            self._endpointListModel.clear()
             
-        paths = self.swagger_spec["paths"]
-        self._callbacks.printOutput("Found " + str(len(paths)) + " paths in swagger spec")
-        
-        for path, methods in paths.items():
-            self._callbacks.printOutput("Processing path: " + str(path))
-            if not isinstance(methods, dict):
-                self._callbacks.printOutput("Path methods is not a dict: " + str(type(methods)))
-                continue
+            self._callbacks.printOutput("Starting endpoint parsing...")
             
-            # Check for path-level parameters
-            path_parameters = methods.get("parameters", [])
-            if path_parameters:
-                self._callbacks.printOutput("Found " + str(len(path_parameters)) + " path-level parameters for path: " + path)
+            if not self.swagger_spec or "paths" not in self.swagger_spec:
+                self._callbacks.printOutput("No swagger spec or paths found")
+                return
                 
-            for method, details in methods.items():
-                self._callbacks.printOutput("Processing method: " + str(method))
-                if method.upper() not in ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]:
-                    self._callbacks.printOutput("Skipping non-HTTP method: " + str(method))
+            paths = self.swagger_spec["paths"]
+            self._callbacks.printOutput("Found " + str(len(paths)) + " paths in swagger spec")
+            
+            # Debug: Show first few paths
+            path_keys = list(paths.keys())
+            self._callbacks.printOutput("First 5 paths: " + str(path_keys[:5]))
+            
+            for path, methods in paths.items():
+                self._callbacks.printOutput("Processing path: " + str(path))
+                if not isinstance(methods, dict):
+                    self._callbacks.printOutput("Path methods is not a dict: " + str(type(methods)) + " - Value: " + str(methods))
                     continue
+                
+                # Check for path-level parameters
+                path_parameters = methods.get("parameters", [])
+                if path_parameters:
+                    self._callbacks.printOutput("Found " + str(len(path_parameters)) + " path-level parameters for path: " + path)
+                
+                # Debug: Show methods for this path
+                method_keys = list(methods.keys())
+                self._callbacks.printOutput("Methods for path " + path + ": " + str(method_keys))
                     
-                endpoint = {
-                    "path": path,
-                    "method": method.upper(),
-                    "details": details,
-                    "path_parameters": path_parameters,  # Store path-level parameters
-                    "description": details.get("summary", details.get("description", "")),
-                    "tags": details.get("tags", [])  # Store endpoint tags
-                }
-                
-                self.endpoints.append(endpoint)
-                
-                # Add to table
-                tags_text = ", ".join(endpoint["tags"]) if endpoint["tags"] else ""
-                self._endpointsTableModel.addRow([
-                    endpoint["method"],
-                    endpoint["path"],
-                    tags_text,
-                    endpoint["description"][:100]
-                ])
-                
-                # Add to list
-                endpoint_text = endpoint["method"] + " " + endpoint["path"]
-                self._endpointListModel.addElement(endpoint_text)
-                # Debug output
-                self._callbacks.printOutput("Added endpoint to list: " + endpoint_text)
-        
-        # Update endpoint count label
-        if hasattr(self, '_endpointCountLabel'):
-            count = len(self.endpoints)
-            if count == 0:
-                self._endpointCountLabel.setText("No endpoints found")
-            elif count == 1:
-                self._endpointCountLabel.setText("1 endpoint loaded")
-            else:
-                self._endpointCountLabel.setText(str(count) + " endpoints loaded")
-        
-        # Force UI updates
-        self._callbacks.printOutput("Parsing complete. Endpoints: " + str(len(self.endpoints)) + ", List size: " + str(self._endpointListModel.getSize()))
-        
-        # Force the list to repaint
-        if hasattr(self, '_endpointList'):
-            self._endpointList.revalidate()
-            self._endpointList.repaint()
-            self._callbacks.printOutput("Forced endpoint list repaint")
-        
-        # Initialize filtered endpoints to show all endpoints
-        self._filtered_endpoints = self.endpoints
-        
-        # Populate tag filter
-        self._populateTagFilter()
-        
-        # Update bulk testing endpoints list
-        self._updateBulkTestingEndpoints()
+                for method, details in methods.items():
+                    self._callbacks.printOutput("Processing method: " + str(method))
+                    if method.upper() not in ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]:
+                        self._callbacks.printOutput("Skipping non-HTTP method: " + str(method))
+                        continue
+                        
+                    endpoint = {
+                        "path": path,
+                        "method": method.upper(),
+                        "details": details,
+                        "path_parameters": path_parameters,  # Store path-level parameters
+                        "description": details.get("summary", details.get("description", "")),
+                        "tags": details.get("tags", [])  # Store endpoint tags
+                    }
+                    
+                    self.endpoints.append(endpoint)
+                    
+                    # Add to table
+                    tags_text = ", ".join(endpoint["tags"]) if endpoint["tags"] else ""
+                    self._endpointsTableModel.addRow([
+                        endpoint["method"],
+                        endpoint["path"],
+                        tags_text,
+                        endpoint["description"][:100]
+                    ])
+                    
+                    # Add to list
+                    endpoint_text = endpoint["method"] + " " + endpoint["path"]
+                    self._endpointListModel.addElement(endpoint_text)
+                    # Debug output
+                    self._callbacks.printOutput("Added endpoint to list: " + endpoint_text)
+            
+            # Update endpoint count label
+            if hasattr(self, '_endpointCountLabel'):
+                count = len(self.endpoints)
+                if count == 0:
+                    self._endpointCountLabel.setText("No endpoints found")
+                elif count == 1:
+                    self._endpointCountLabel.setText("1 endpoint loaded")
+                else:
+                    self._endpointCountLabel.setText(str(count) + " endpoints loaded")
+            
+            # Force UI updates
+            self._callbacks.printOutput("Parsing complete. Endpoints: " + str(len(self.endpoints)) + ", List size: " + str(self._endpointListModel.getSize()))
+            
+            # Force the list to repaint
+            if hasattr(self, '_endpointList'):
+                self._endpointList.revalidate()
+                self._endpointList.repaint()
+                self._callbacks.printOutput("Forced endpoint list repaint")
+            
+            # Initialize filtered endpoints to show all endpoints
+            self._filtered_endpoints = self.endpoints
+            
+            # Populate tag filter
+            self._populateTagFilter()
+            
+            # Update bulk testing endpoints list
+            self._updateBulkTestingEndpoints()
+            
+            # Force bulk testing tab to refresh
+            if hasattr(self, '_bulkEndpointList'):
+                self._bulkEndpointList.revalidate()
+                self._bulkEndpointList.repaint()
+                self._callbacks.printOutput("Forced bulk testing tab refresh")
+            
+        except Exception as e:
+            self._callbacks.printError("Error parsing endpoints: " + str(e))
+            import traceback
+            self._callbacks.printError("Traceback: " + str(traceback.format_exc()))
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "Error parsing endpoints: " + str(e), 
+                "Parse Error", JOptionPane.ERROR_MESSAGE)
     
     def _refreshEndpointList(self, event):
         """Refresh the endpoint list display"""
@@ -3307,13 +3347,30 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         chooser = JFileChooser()
         chooser.setDialogTitle("Select Swagger/OpenAPI file")
         
+        # Add file filter for JSON and YAML files
+        from javax.swing.filechooser import FileNameExtensionFilter
+        jsonFilter = FileNameExtensionFilter("JSON files (*.json)", "json")
+        yamlFilter = FileNameExtensionFilter("YAML files (*.yaml, *.yml)", "yaml", "yml")
+        chooser.addChoosableFileFilter(jsonFilter)
+        chooser.addChoosableFileFilter(yamlFilter)
+        chooser.setFileFilter(jsonFilter)  # Set JSON as default filter
+        
         if chooser.showOpenDialog(self._mainPanel) == JFileChooser.APPROVE_OPTION:
             file = chooser.getSelectedFile()
             try:
-                with open(file.getAbsolutePath(), 'r') as f:
+                # Validate file extension
+                file_path = file.getAbsolutePath()
+                if not (file_path.lower().endswith('.json') or file_path.lower().endswith('.yaml') or file_path.lower().endswith('.yml')):
+                    JOptionPane.showMessageDialog(self._mainPanel,
+                        "Please select a valid Swagger/OpenAPI file (.json, .yaml, or .yml)",
+                        "Invalid File Type", JOptionPane.WARNING_MESSAGE)
+                    return
+                
+                with open(file_path, 'r') as f:
                     content = f.read()
-                    
-                self._parseSwaggerSpec(content, "file://" + file.getAbsolutePath())
+                
+                self._callbacks.printOutput("Loading file: " + file_path)
+                self._parseSwaggerSpec(content, "file://" + file_path)
                 
             except Exception as e:
                 JOptionPane.showMessageDialog(self._mainPanel,
