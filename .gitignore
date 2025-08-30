@@ -64,5 +64,6 @@ venv.bak/
 test_parser.py
 test_parsing.py
 test_swagger.json
+test_swagger2.json
 yaml_lite.py
 yaml_lite$py.class

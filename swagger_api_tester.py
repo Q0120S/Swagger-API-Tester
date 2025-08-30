@@ -3061,29 +3061,38 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                 "Error", JOptionPane.ERROR_MESSAGE)
             
     def _parseSwaggerSpec(self, content, source_url):
-        """Parse Swagger/OpenAPI specification"""
+        """Parse Swagger/OpenAPI specification or Postman Collection"""
         try:
             # Try parsing as JSON first
             try:
-                self.swagger_spec = json.loads(content)
+                parsed_content = json.loads(content)
                 self._callbacks.printOutput("Successfully parsed as JSON")
             except Exception as e:
                 self._callbacks.printOutput("JSON parsing failed: " + str(e))
                 # Try parsing as YAML
                 if yaml:
                     try:
-                        self.swagger_spec = yaml.safe_load(content)
+                        parsed_content = yaml.safe_load(content)
                         self._callbacks.printOutput("Successfully parsed as YAML")
                     except Exception as e:
                         raise Exception("Failed to parse as JSON or YAML: " + str(e))
                 else:
                     raise Exception("Failed to parse as JSON and YAML support is not available")
             
+            # Check if it's a Postman Collection
+            if self._isPostmanCollection(parsed_content):
+                self._callbacks.printOutput("Detected Postman Collection format")
+                self.swagger_spec = self._convertPostmanToSwagger(parsed_content)
+                self._callbacks.printOutput("Converted Postman Collection to Swagger format")
+            else:
+                self._callbacks.printOutput("Detected Swagger/OpenAPI format")
+                self.swagger_spec = parsed_content
+            
             # Extract base URL
             self.base_url = self._extractBaseUrl(source_url)
             
             # Debug: Show what we parsed
-            self._callbacks.printOutput("Parsed swagger spec keys: " + str(self.swagger_spec.keys()))
+            self._callbacks.printOutput("Parsed spec keys: " + str(self.swagger_spec.keys()))
             if "paths" in self.swagger_spec:
                 self._callbacks.printOutput("Paths found: " + str(list(self.swagger_spec["paths"].keys())))
             
@@ -3103,7 +3112,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                 self._callbacks.printOutput("Updated base URL field: " + self.base_url)
             
             # Force UI updates
-            self._callbacks.printOutput("Swagger spec loaded successfully. Forcing UI updates...")
+            self._callbacks.printOutput("Specification loaded successfully. Forcing UI updates...")
             
             # Force the endpoint list to update
             if hasattr(self, '_endpointList'):
@@ -3130,10 +3139,175 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         except Exception as e:
             self._progressBar.setIndeterminate(False)
             self._progressBar.setString("Parse error: " + str(e))
-            self._callbacks.printError("Error parsing swagger spec: " + str(e))
+            self._callbacks.printError("Error parsing specification: " + str(e))
             JOptionPane.showMessageDialog(self._mainPanel,
                 "Error parsing specification: " + str(e), 
                 "Error", JOptionPane.ERROR_MESSAGE)
+    
+    def _isPostmanCollection(self, parsed_content):
+        """Check if the parsed content is a Postman Collection"""
+        try:
+            # Check for Postman Collection v2.1.0 signature
+            if "info" in parsed_content and "item" in parsed_content:
+                info = parsed_content["info"]
+                if "schema" in info and "postman" in info["schema"].lower():
+                    return True
+                # Also check for Postman Collection v2.0
+                if "_postman_id" in info:
+                    return True
+            return False
+        except:
+            return False
+    
+    def _convertPostmanToSwagger(self, postman_content):
+        """Convert Postman Collection to Swagger format"""
+        try:
+            # Create basic Swagger structure
+            swagger_spec = {
+                "swagger": "2.0",
+                "info": {
+                    "title": postman_content.get("info", {}).get("name", "Postman Collection"),
+                    "version": "1.0.0",
+                    "description": postman_content.get("info", {}).get("description", "Converted from Postman Collection")
+                },
+                "paths": {},
+                "host": "{{baseUrl}}",  # Postman uses variable
+                "basePath": "",
+                "schemes": ["https", "http"]
+            }
+            
+            # Extract endpoints from Postman items
+            self._extractPostmanEndpoints(postman_content.get("item", []), swagger_spec["paths"])
+            
+            self._callbacks.printOutput("Converted Postman Collection with " + str(len(swagger_spec["paths"])) + " paths")
+            return swagger_spec
+            
+        except Exception as e:
+            self._callbacks.printError("Error converting Postman Collection: " + str(e))
+            raise Exception("Failed to convert Postman Collection: " + str(e))
+    
+    def _extractPostmanEndpoints(self, items, paths_dict, parent_path=""):
+        """Recursively extract endpoints from Postman Collection items"""
+        try:
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                
+                item_name = item.get("name", "")
+                item_type = item.get("item", None)
+                
+                if item_type:
+                    # This is a folder, recurse with updated path
+                    current_path = parent_path + "/" + item_name if parent_path else "/" + item_name
+                    self._extractPostmanEndpoints(item_type, paths_dict, current_path)
+                else:
+                    # This is an endpoint
+                    request = item.get("request", {})
+                    if request:
+                        method = request.get("method", "GET").upper()
+                        url_info = request.get("url", {})
+                        
+                        if url_info:
+                            # Extract path from URL
+                            raw_url = url_info.get("raw", "")
+                            if raw_url and "{{baseUrl}}" in raw_url:
+                                # Extract path part after baseUrl
+                                path_part = raw_url.split("{{baseUrl}}")[-1]
+                                if "?" in path_part:
+                                    path_part = path_part.split("?")[0]  # Remove query params
+                                
+                                # Combine with parent path if exists
+                                full_path = parent_path + path_part if parent_path else path_part
+                                
+                                # Clean up path (remove double slashes, etc.)
+                                full_path = "/" + "/".join(filter(None, full_path.split("/")))
+                                
+                                # Create endpoint entry
+                                if full_path not in paths_dict:
+                                    paths_dict[full_path] = {}
+                                
+                                # Extract parameters
+                                parameters = []
+                                
+                                # Query parameters
+                                if "query" in url_info:
+                                    for query_param in url_info["query"]:
+                                        if isinstance(query_param, dict):
+                                            param_name = query_param.get("key", "")
+                                            param_value = query_param.get("value", "")
+                                            param_desc = query_param.get("description", "")
+                                            if param_name:
+                                                parameters.append({
+                                                    "name": param_name,
+                                                    "in": "query",
+                                                    "type": "string",
+                                                    "required": param_desc and "required" in param_desc.lower(),
+                                                    "description": param_desc
+                                                })
+                                
+                                # Path parameters (extract from path)
+                                path_params = re.findall(r'\{([^}]+)\}', full_path)
+                                for param_name in path_params:
+                                    parameters.append({
+                                        "name": param_name,
+                                        "in": "path",
+                                        "type": "string",
+                                        "required": True,
+                                        "description": "Path parameter: " + param_name
+                                    })
+                                
+                                # Headers
+                                headers = request.get("header", [])
+                                for header in headers:
+                                    if isinstance(header, dict):
+                                        header_name = header.get("key", "")
+                                        header_value = header.get("value", "")
+                                        header_desc = header.get("description", "")
+                                        if header_name and header_name.lower() not in ["content-type", "accept"]:
+                                            parameters.append({
+                                                "name": header_name,
+                                                "in": "header",
+                                                "type": "string",
+                                                "required": header_desc and "required" in header_desc.lower(),
+                                                "description": header_desc
+                                            })
+                                
+                                # Body parameters
+                                body = request.get("body", {})
+                                if body and body.get("mode") == "raw":
+                                    raw_body = body.get("raw", "")
+                                    if raw_body:
+                                        try:
+                                            # Try to parse as JSON to determine if it's a body parameter
+                                            json.loads(raw_body)
+                                            parameters.append({
+                                                "name": "body",
+                                                "in": "body",
+                                                "required": True,
+                                                "description": "Request body",
+                                                "schema": {"type": "object"}
+                                            })
+                                        except:
+                                            # Not valid JSON, might be form data
+                                            pass
+                                
+                                # Create the endpoint
+                                paths_dict[full_path][method.lower()] = {
+                                    "summary": item_name,
+                                    "description": item_name,
+                                    "parameters": parameters,
+                                    "tags": [parent_path.split("/")[-1] if parent_path else "root"],
+                                    "responses": {
+                                        "200": {
+                                            "description": "Success"
+                                        }
+                                    }
+                                }
+                                
+                                self._callbacks.printOutput("Added Postman endpoint: " + method + " " + full_path)
+            
+        except Exception as e:
+            self._callbacks.printError("Error extracting Postman endpoints: " + str(e))
             
     def _extractBaseUrl(self, source_url):
         """Extract base URL from source URL and swagger spec"""

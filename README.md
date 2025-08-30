@@ -6,6 +6,7 @@ A comprehensive Burp Suite extension for parsing Swagger/OpenAPI specifications 
 
 ### **Core Functionality**
 - **Swagger/OpenAPI Parsing** - Support for JSON and YAML formats
+- **Postman Collection Support** - Import and convert Postman Collections to Swagger format
 - **Interactive API Testing** - Repeater-like interface for endpoint testing
 - **Bulk Testing** - Test all endpoints automatically with configurable delays
 - **Parameter Management** - Dynamic path, query, and header parameter handling
@@ -78,7 +79,9 @@ A comprehensive Burp Suite extension for parsing Swagger/OpenAPI specifications 
 #### **Loading Specifications**
 - **From File**: Click "Load from File" → Select JSON/YAML file → Automatic parsing
 - **From URL**: Enter Swagger URL → Click "Fetch from URL" → Automatic parsing
-- **File Validation**: Only accepts `.json`, `.yaml`, and `.yml` files
+- **File Validation**: Accepts `.json`, `.yaml`, and `.yml` files
+- **Format Detection**: Automatically detects Swagger/OpenAPI vs Postman Collection
+- **Postman Support**: Converts Postman Collections to Swagger format for testing
 - **Auto-Update**: All tabs update automatically after successful loading
 
 #### **Features**
