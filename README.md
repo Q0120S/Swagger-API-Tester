@@ -128,8 +128,9 @@ A comprehensive Burp Suite extension for parsing Swagger/OpenAPI specifications 
 
 #### **Configuration**
 - **Delay Setting**: Time between requests (milliseconds)
-- **Timeout Setting**: Maximum time to wait for each response
+- **Timeout Setting**: Maximum time to wait for each response (milliseconds)
 - **Endpoint Selection**: Choose which endpoints to test
+- **Timeout Handling**: Automatic timeout detection with visual indicators
 
 #### **Execution Control**
 - **Start**: Begin bulk testing process
@@ -147,13 +148,17 @@ A comprehensive Burp Suite extension for parsing Swagger/OpenAPI specifications 
 
 #### **Results Management**
 - **Results Table**: Shows all test results with columns:
-  - Status (Success/Error)
+  - Status (Success/Error/Timeout)
   - Method
   - Path
   - Response Code
   - Response Time
   - Size
   - Notes
+- **Status Colors**: 
+  - 🟢 **Green**: Successful responses
+  - 🔴 **Red**: Error responses
+  - 🟡 **Yellow**: Timeout responses
 - **Sorting**: Click any column header to sort results
 - **Context Menu**: Right-click for additional options
 

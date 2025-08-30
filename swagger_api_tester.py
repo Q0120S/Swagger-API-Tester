@@ -910,7 +910,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                     self._bulkTestingCompleted()
     
     def _testSingleEndpoint(self, endpoint, timeout):
-        """Test a single endpoint and return results"""
+        """Test a single endpoint and return results with timeout handling"""
         start_time = time.time()
         
         try:
@@ -933,20 +933,70 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                     "notes": "Failed to build request"
                 }
             
-            # Send request using the same method as API Tester tab
-            response = self._callbacks.makeHttpRequest(http_service, request_bytes)
+            # Implement timeout handling using threading
+            # Use a mutable object to store shared variables (Jython compatibility)
+            shared_state = {
+                'response': None,
+                'request_completed': False,
+                'request_error': None
+            }
+            
+            def make_request():
+                try:
+                    shared_state['response'] = self._callbacks.makeHttpRequest(http_service, request_bytes)
+                    shared_state['request_completed'] = True
+                except Exception as e:
+                    shared_state['request_error'] = e
+                    shared_state['request_completed'] = True
+            
+            # Start request in a separate thread
+            request_thread = Thread(target=make_request)
+            request_thread.daemon = True
+            request_thread.start()
+            
+            # Wait for request to complete or timeout
+            request_thread.join(timeout / 1000.0)  # Convert ms to seconds
             
             # Calculate response time
             response_time = int((time.time() - start_time) * 1000)
             
-            if response:
-                response_info = self._helpers.analyzeResponse(response.getResponse())
+            # Check if request timed out
+            if not shared_state['request_completed']:
+                return {
+                    "status": "Timeout",
+                    "method": endpoint["method"],
+                    "path": endpoint["path"],
+                    "response_code": "Timeout",
+                    "response_time": "{}ms".format(response_time),
+                    "size": "N/A",
+                    "notes": "Request timed out after {}ms".format(timeout),
+                    "request": self._helpers.bytesToString(request_bytes),
+                    "response": "Request timed out"
+                }
+            
+            # Check if there was an error
+            if shared_state['request_error']:
+                return {
+                    "status": "Error",
+                    "method": endpoint["method"],
+                    "path": endpoint["path"],
+                    "response_code": "N/A",
+                    "response_time": "{}ms".format(response_time),
+                    "size": "N/A",
+                    "notes": "Request error: {}".format(str(shared_state['request_error'])),
+                    "request": self._helpers.bytesToString(request_bytes),
+                    "response": "Request failed due to error"
+                }
+            
+            # Process successful response
+            if shared_state['response']:
+                response_info = self._helpers.analyzeResponse(shared_state['response'].getResponse())
                 status_code = response_info.getStatusCode()
-                response_size = len(response.getResponse())
+                response_size = len(shared_state['response'].getResponse())
                 
                 # Get request and response data for export
                 request_data = self._helpers.bytesToString(request_bytes)
-                response_data = self._helpers.bytesToString(response.getResponse())
+                response_data = self._helpers.bytesToString(shared_state['response'].getResponse())
                 
                 return {
                     "status": "Success",
@@ -1394,6 +1444,38 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         
         return BulkResultsMouseListener(self)
     
+    def _createBulkResultsRenderer(self):
+        """Create custom renderer for bulk results table to show status colors"""
+        from javax.swing.table import DefaultTableCellRenderer
+        from java.awt import Color
+        
+        class BulkResultsRenderer(DefaultTableCellRenderer):
+            def __init__(self):
+                super(BulkResultsRenderer, self).__init__()
+                self.setOpaque(True)
+            
+            def getTableCellRendererComponent(self, table, value, isSelected, hasFocus, row, column):
+                component = super(BulkResultsRenderer, self).getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column)
+                
+                if not isSelected:
+                    # Get status from first column
+                    status = table.getValueAt(row, 0)
+                    
+                    if status == "Success":
+                        component.setBackground(Color(200, 255, 200))  # Light green
+                    elif status == "Error":
+                        component.setBackground(Color(255, 200, 200))  # Light red
+                    elif status == "Timeout":
+                        component.setBackground(Color(255, 255, 200))  # Light yellow
+                    else:
+                        component.setBackground(table.getBackground())
+                else:
+                    component.setBackground(table.getSelectionBackground())
+                
+                return component
+        
+        return BulkResultsRenderer()
+    
     def _createBulkEndpointSelectionListener(self):
         """Create list selection listener for bulk testing endpoints list"""
         class BulkEndpointSelectionListener(ListSelectionListener):
@@ -1816,6 +1898,9 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         
         # Add right-click context menu
         self._bulkResultsTable.addMouseListener(self._createBulkResultsMouseListener())
+        
+        # Add custom renderer for status column to show colors
+        self._bulkResultsTable.setDefaultRenderer(Object, self._createBulkResultsRenderer())
         
         resultsScrollPane = JScrollPane(self._bulkResultsTable)
         rightPanel.add(resultsScrollPane, BorderLayout.CENTER)
