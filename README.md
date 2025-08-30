@@ -30,6 +30,7 @@ A comprehensive Burp Suite extension for parsing Swagger/OpenAPI specifications 
 - **Theme Support** - Burp theme and dark theme options
 - **Endpoint List** - Clear, organized view of all available endpoints
 - **Real-time Updates** - Immediate synchronization between tabs
+- **Endpoint Management** - Remove single or multiple endpoints with confirmation dialogs
 
 ---
 
@@ -115,6 +116,14 @@ A comprehensive Burp Suite extension for parsing Swagger/OpenAPI specifications 
 - **Syntax Highlighting**: Color-coded content
 - **Theme Switching**: Burp theme or dark theme
 
+#### **Endpoint Management**
+- **Remove Selected**: Remove the currently selected endpoint
+- **Remove Multiple**: Remove multiple selected endpoints at once
+- **Clear All**: Remove all endpoints from the list
+- **Context Menu**: Right-click on endpoints for quick actions
+- **Copy Endpoint Info**: Copy endpoint details to clipboard
+- **Bulk Operations**: Select multiple endpoints for batch removal
+
 ### **Bulk Testing Tab**
 
 #### **Configuration**
@@ -187,6 +196,10 @@ A comprehensive Burp Suite extension for parsing Swagger/OpenAPI specifications 
 - **Ctrl+R** (**⌃+R**): Send request to Repeater
 - **Ctrl+I** (**⌃+I**): Send request to Intruder
 - **Ctrl+O** (**⌃+O**): Send request to Organizer/Scanner
+
+### **Endpoint Management**
+- **Delete**: Remove selected endpoint(s) from the list
+- **Ctrl+Delete**: Clear all endpoints from the list
 
 ### **Usage Notes**
 - Shortcuts work when an endpoint is selected in API Tester tab

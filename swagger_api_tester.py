@@ -2271,21 +2271,27 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         # Endpoint list
         self._endpointListModel = DefaultListModel()
         self._endpointList = JList(self._endpointListModel)
-        self._endpointList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
+        self._endpointList.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION)
         self._endpointList.addListSelectionListener(self._createListSelectionListener())
         
         # Add keyboard shortcut for sending requests (Ctrl+Space / Cmd+Space)
         self._endpointList.addKeyListener(self._createRequestShortcutListener())
         
-        # Info panel with debug buttons
+        # Add context menu for endpoint list
+        self._endpointList.addMouseListener(self._createEndpointListMouseListener())
+        
+        # Info panel with debug buttons and endpoint management
         infoPanel = JPanel(BorderLayout())
+        
+        # Left side - Debug and test buttons
+        leftButtonsPanel = JPanel()
+        leftButtonsPanel.setLayout(FlowLayout(FlowLayout.LEFT))
         
         # Debug button
         debugButton = JButton("Debug List", actionPerformed=self._debugEndpointList)
         debugButton.setToolTipText("Debug endpoint list contents")
         debugButton.setBackground(Color(60, 60, 60))  # Dark button background
         debugButton.setForeground(Color(200, 200, 200))  # Light button text
-        infoPanel.add(debugButton, BorderLayout.CENTER)
         
         # Add test buttons for debugging
         testEndpointButton = JButton("Add Test Endpoint", actionPerformed=self._addTestEndpoint)
@@ -2298,13 +2304,39 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         testComprehensiveButton.setBackground(Color(60, 60, 60))  # Dark button background
         testComprehensiveButton.setForeground(Color(200, 200, 200))  # Light button text
         
-        # Create a panel for the test buttons
-        testButtonsPanel = JPanel()
-        testButtonsPanel.setLayout(FlowLayout(FlowLayout.LEFT))
-        testButtonsPanel.add(testEndpointButton)
-        testButtonsPanel.add(testComprehensiveButton)
+        leftButtonsPanel.add(debugButton)
+        leftButtonsPanel.add(testEndpointButton)
+        leftButtonsPanel.add(testComprehensiveButton)
         
-        infoPanel.add(testButtonsPanel, BorderLayout.EAST)
+        # Right side - Endpoint management buttons
+        rightButtonsPanel = JPanel()
+        rightButtonsPanel.setLayout(FlowLayout(FlowLayout.RIGHT))
+        
+        # Remove selected endpoint button
+        removeSelectedButton = JButton("Remove Selected", actionPerformed=self._removeSelectedEndpoint)
+        removeSelectedButton.setToolTipText("Remove the currently selected endpoint from the list")
+        removeSelectedButton.setBackground(Color(200, 100, 100))  # Red background for removal
+        removeSelectedButton.setForeground(Color(255, 255, 255))  # White text
+        
+        # Remove multiple endpoints button
+        removeMultipleButton = JButton("Remove Multiple", actionPerformed=self._removeMultipleEndpoints)
+        removeMultipleButton.setToolTipText("Remove multiple selected endpoints from the list")
+        removeMultipleButton.setBackground(Color(200, 100, 100))  # Red background for removal
+        removeMultipleButton.setForeground(Color(255, 255, 255))  # White text
+        
+        # Clear all endpoints button
+        clearAllButton = JButton("Clear All", actionPerformed=self._clearAllEndpoints)
+        clearAllButton.setToolTipText("Remove all endpoints from the list")
+        clearAllButton.setBackground(Color(200, 100, 100))  # Red background for removal
+        clearAllButton.setForeground(Color(255, 255, 255))  # White text
+        
+        rightButtonsPanel.add(removeSelectedButton)
+        rightButtonsPanel.add(removeMultipleButton)
+        rightButtonsPanel.add(clearAllButton)
+        
+        # Add both panels to info panel
+        infoPanel.add(leftButtonsPanel, BorderLayout.WEST)
+        infoPanel.add(rightButtonsPanel, BorderLayout.EAST)
         
         # Add search panel and endpoint list to a container panel
         listContainerPanel = JPanel(BorderLayout())
@@ -2736,7 +2768,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
     def _showAllEndpoints(self):
         """Show all endpoints (clear search)"""
         self._updateEndpointList(self.endpoints)
-        self._endpointCountLabel.setText(str(len(self.endpoints)) + " endpoints loaded")
+        self._updateEndpointCountLabel()
     
     def _updateEndpointList(self, endpoints_to_show):
         """Update the endpoint list with filtered results"""
@@ -3197,14 +3229,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                     self._callbacks.printOutput("Added endpoint to list: " + endpoint_text)
             
             # Update endpoint count label
-            if hasattr(self, '_endpointCountLabel'):
-                count = len(self.endpoints)
-                if count == 0:
-                    self._endpointCountLabel.setText("No endpoints found")
-                elif count == 1:
-                    self._endpointCountLabel.setText("1 endpoint loaded")
-                else:
-                    self._endpointCountLabel.setText(str(count) + " endpoints loaded")
+            self._updateEndpointCountLabel()
             
             # Force UI updates
             self._callbacks.printOutput("Parsing complete. Endpoints: " + str(len(self.endpoints)) + ", List size: " + str(self._endpointListModel.getSize()))
@@ -3319,14 +3344,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             self._endpointListModel.addElement(endpoint_text)
             
             # Update count label
-            if hasattr(self, '_endpointCountLabel'):
-                count = len(self.endpoints)
-                if count == 0:
-                    self._endpointCountLabel.setText("No endpoints loaded")
-                elif count == 1:
-                    self._endpointCountLabel.setText("1 endpoint loaded")
-                else:
-                    self._endpointCountLabel.setText(str(count) + " endpoints loaded")
+            self._updateEndpointCountLabel()
             
             # Force UI updates
             self._endpointList.revalidate()
@@ -3341,7 +3359,176 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
             JOptionPane.showMessageDialog(self._mainPanel,
                 "Error adding test endpoint: " + str(e),
                 "Error", JOptionPane.ERROR_MESSAGE)
+    
+    def _removeSelectedEndpoint(self, event):
+        """Remove the currently selected endpoint from the list"""
+        try:
+            selected_indices = self._endpointList.getSelectedIndices()
+            if len(selected_indices) == 0:
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "Please select an endpoint to remove.",
+                    "No Selection", JOptionPane.WARNING_MESSAGE)
+                return
+            
+            if len(selected_indices) == 1:
+                # Single endpoint removal
+                index = selected_indices[0]
+                endpoint_text = self._endpointListModel.getElementAt(index)
                 
+                result = JOptionPane.showConfirmDialog(self._mainPanel,
+                    "Remove endpoint: {} ?".format(endpoint_text),
+                    "Confirm Removal", JOptionPane.YES_NO_OPTION)
+                
+                if result == JOptionPane.YES_OPTION:
+                    # Remove from endpoints array
+                    if index < len(self.endpoints):
+                        removed_endpoint = self.endpoints.pop(index)
+                        self._callbacks.printOutput("Removed endpoint: " + str(removed_endpoint))
+                    
+                    # Remove from list model
+                    self._endpointListModel.remove(index)
+                    
+                    # Remove from table model
+                    if hasattr(self, '_endpointsTableModel') and index < self._endpointsTableModel.getRowCount():
+                        self._endpointsTableModel.removeRow(index)
+                    
+                    # Update count label
+                    self._updateEndpointCountLabel()
+                    
+                    # Update bulk testing endpoints list
+                    self._updateBulkTestingEndpoints()
+                    
+                    # Clear selection
+                    self._endpointList.clearSelection()
+                    
+                    JOptionPane.showMessageDialog(self._mainPanel,
+                        "Endpoint removed successfully!",
+                        "Success", JOptionPane.INFORMATION_MESSAGE)
+            else:
+                # Multiple endpoints selected - use the multiple removal method
+                self._removeMultipleEndpoints(event)
+                
+        except Exception as e:
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "Error removing endpoint: " + str(e),
+                "Error", JOptionPane.ERROR_MESSAGE)
+    
+    def _removeMultipleEndpoints(self, event):
+        """Remove multiple selected endpoints from the list"""
+        try:
+            selected_indices = self._endpointList.getSelectedIndices()
+            if len(selected_indices) == 0:
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "Please select endpoints to remove.",
+                    "No Selection", JOptionPane.WARNING_MESSAGE)
+                return
+            
+            # Sort indices in descending order to avoid index shifting issues
+            selected_indices = sorted(selected_indices, reverse=True)
+            
+            # Confirm removal
+            count = len(selected_indices)
+            result = JOptionPane.showConfirmDialog(self._mainPanel,
+                "Remove {} selected endpoint(s)?\n\nThis action cannot be undone.".format(count),
+                "Confirm Multiple Removal", JOptionPane.YES_NO_OPTION)
+            
+            if result == JOptionPane.YES_OPTION:
+                removed_count = 0
+                
+                # Remove from endpoints array (in reverse order)
+                for index in selected_indices:
+                    if index < len(self.endpoints):
+                        removed_endpoint = self.endpoints.pop(index)
+                        self._callbacks.printOutput("Removed endpoint: " + str(removed_endpoint))
+                        removed_count += 1
+                
+                # Remove from list model (in reverse order)
+                for index in selected_indices:
+                    if index < self._endpointListModel.getSize():
+                        self._endpointListModel.remove(index)
+                
+                # Remove from table model (in reverse order)
+                if hasattr(self, '_endpointsTableModel'):
+                    for index in selected_indices:
+                        if index < self._endpointsTableModel.getRowCount():
+                            self._endpointsTableModel.removeRow(index)
+                
+                                    # Update count label
+                    self._updateEndpointCountLabel()
+                    
+                    # Update bulk testing endpoints list
+                    self._updateBulkTestingEndpoints()
+                    
+                    # Clear selection
+                    self._endpointList.clearSelection()
+                    
+                    JOptionPane.showMessageDialog(self._mainPanel,
+                        "Successfully removed {} endpoint(s)!".format(removed_count),
+                        "Success", JOptionPane.INFORMATION_MESSAGE)
+                
+        except Exception as e:
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "Error removing endpoints: " + str(e),
+                "Error", JOptionPane.ERROR_MESSAGE)
+    
+    def _clearAllEndpoints(self, event):
+        """Remove all endpoints from the list"""
+        try:
+            if not hasattr(self, 'endpoints') or len(self.endpoints) == 0:
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "No endpoints to clear.",
+                    "No Endpoints", JOptionPane.INFORMATION_MESSAGE)
+                return
+            
+            count = len(self.endpoints)
+            result = JOptionPane.showConfirmDialog(self._mainPanel,
+                "Clear all {} endpoints?\n\nThis action cannot be undone.".format(count),
+                "Confirm Clear All", JOptionPane.YES_NO_OPTION)
+            
+            if result == JOptionPane.YES_OPTION:
+                # Clear endpoints array
+                self.endpoints = []
+                
+                # Clear list model
+                self._endpointListModel.clear()
+                
+                # Clear table model
+                if hasattr(self, '_endpointsTableModel'):
+                    self._endpointsTableModel.setRowCount(0)
+                
+                # Update count label
+                self._updateEndpointCountLabel()
+                
+                # Update bulk testing endpoints list
+                self._updateBulkTestingEndpoints()
+                
+                # Clear any current request/response
+                if hasattr(self, '_requestEditor'):
+                    self._requestEditor.setText("")
+                if hasattr(self, '_responseEditor'):
+                    self._responseEditor.setText("")
+                
+                self._callbacks.printOutput("Cleared all {} endpoints".format(count))
+                JOptionPane.showMessageDialog(self._mainPanel,
+                    "All endpoints cleared successfully!",
+                    "Success", JOptionPane.INFORMATION_MESSAGE)
+                
+        except Exception as e:
+            JOptionPane.showMessageDialog(self._mainPanel,
+                "Error clearing endpoints: " + str(e),
+                "Error", JOptionPane.ERROR_MESSAGE)
+    
+    def _updateEndpointCountLabel(self):
+        """Update the endpoint count label"""
+        if hasattr(self, '_endpointCountLabel'):
+            count = len(self.endpoints) if hasattr(self, 'endpoints') else 0
+            if count == 0:
+                self._endpointCountLabel.setText("No endpoints loaded")
+            elif count == 1:
+                self._endpointCountLabel.setText("1 endpoint loaded")
+            else:
+                self._endpointCountLabel.setText(str(count) + " endpoints loaded")
+    
     def _loadFromFile(self, event):
         """Load Swagger spec from file"""
         chooser = JFileChooser()
@@ -4663,7 +4850,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
         return HeadersTableMouseListener(self)
     
     def _createRequestShortcutListener(self):
-        """Create keyboard shortcut listener for sending requests (Ctrl+Space / Cmd+Space)"""
+        """Create keyboard shortcut listener for sending requests and endpoint management"""
         class RequestShortcutListener(KeyAdapter):
             def __init__(self, extender):
                 self.extender = extender
@@ -4682,6 +4869,21 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                         JOptionPane.showMessageDialog(self.extender._mainPanel,
                             "Please select an endpoint first", 
                             "No Endpoint Selected", JOptionPane.INFORMATION_MESSAGE)
+                
+                # Check for Delete key (Remove selected endpoint)
+                elif event.getKeyCode() == KeyEvent.VK_DELETE:
+                    if self.extender._endpointList.getSelectedIndices():
+                        event.consume()
+                        self.extender._removeSelectedEndpoint(None)
+                    else:
+                        JOptionPane.showMessageDialog(self.extender._mainPanel,
+                            "Please select an endpoint to remove", 
+                            "No Endpoint Selected", JOptionPane.INFORMATION_MESSAGE)
+                
+                # Check for Control+Delete (Clear all endpoints)
+                elif event.getKeyCode() == KeyEvent.VK_DELETE and event.isControlDown():
+                    event.consume()
+                    self.extender._clearAllEndpoints(None)
             
             def keyTyped(self, event):
                 # Check for Control+Space (Send Request)
@@ -4696,7 +4898,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                             "No Endpoint Selected", JOptionPane.INFORMATION_MESSAGE)
                 
                 # Check for Control+R (Send to Repeater)
-                elif char == 'r' and ctrl_down:
+                elif event.getKeyChar() == 'r' and event.isControlDown():
                     if self.extender.current_endpoint:
                         event.consume()
                         from threading import Thread
@@ -4707,7 +4909,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                             "No Endpoint Selected", JOptionPane.INFORMATION_MESSAGE)
                 
                 # Check for Control+I (Send to Intruder)
-                elif char == 'i' and ctrl_down:
+                elif event.getKeyChar() == 'i' and event.isControlDown():
                     if self.extender.current_endpoint:
                         event.consume()
                         from threading import Thread
@@ -4718,7 +4920,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                             "No Endpoint Selected", JOptionPane.INFORMATION_MESSAGE)
                 
                 # Check for Control+O (Send to Scanner)
-                elif char == 'o' and ctrl_down:
+                elif event.getKeyChar() == 'o' and event.isControlDown():
                     if self.extender.current_endpoint:
                         event.consume()
                         from threading import Thread
@@ -5500,18 +5702,132 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                     self._endpointListModel.addElement(endpoint_text)
                 
                 # Update the endpoint count label
-                if hasattr(self, '_endpointCountLabel'):
-                    count = len(self.endpoints)
-                    if count == 0:
-                        self._endpointCountLabel.setText("No endpoints found")
-                    elif count == 1:
-                        self._endpointCountLabel.setText("1 endpoint loaded")
-                    else:
-                        self._endpointCountLabel.setText(str(count) + " endpoints loaded")
+                self._updateEndpointCountLabel()
                 
                 self._callbacks.printOutput("All endpoint URLs updated for new base URL: " + self.base_url)
         except Exception as e:
             self._callbacks.printError("Error updating endpoint URLs: " + str(e))
+    
+    def _createEndpointListMouseListener(self):
+        """Create mouse listener for endpoint list context menu"""
+        class EndpointListMouseListener(MouseAdapter):
+            def __init__(self, parent):
+                self.parent = parent
+                self._endpointListPopup = None
+            
+            def mousePressed(self, event):
+                if event.isPopupTrigger():
+                    self._showContextMenu(event)
+            
+            def mouseReleased(self, event):
+                if event.isPopupTrigger():
+                    self._showContextMenu(event)
+            
+            def _showContextMenu(self, event):
+                # Get the clicked location
+                clicked_index = self.parent._endpointList.locationToIndex(event.getPoint())
+                
+                # Check if we clicked on an item
+                if clicked_index >= 0:
+                    # Select the clicked item if it's not already selected
+                    if not self.parent._endpointList.isSelectedIndex(clicked_index):
+                        self.parent._endpointList.setSelectedIndex(clicked_index)
+                    
+                    # Create and show context menu
+                    self._createContextMenu(event, clicked_index)
+                else:
+                    # Clicked on empty space - show general context menu
+                    self._createContextMenu(event, -1)
+            
+            def _createContextMenu(self, event, clicked_index):
+                self._endpointListPopup = JPopupMenu()
+                
+                # Get selected indices
+                selected_indices = self.parent._endpointList.getSelectedIndices()
+                
+                if clicked_index >= 0 and len(selected_indices) > 0:
+                    # Item-specific actions
+                    if len(selected_indices) == 1:
+                        # Single item selected
+                        endpoint_text = self.parent._endpointListModel.getElementAt(clicked_index)
+                        
+                        # Remove this endpoint
+                        removeItem = JMenuItem("Remove Endpoint", actionPerformed=lambda e: self.parent._removeSelectedEndpoint(None))
+                        removeItem.setToolTipText("Remove this endpoint from the list")
+                        self._endpointListPopup.add(removeItem)
+                        
+                        # Copy endpoint info
+                        copyItem = JMenuItem("Copy Endpoint Info", actionPerformed=lambda e: self._copyEndpointInfo(endpoint_text))
+                        copyItem.setToolTipText("Copy endpoint method and path to clipboard")
+                        self._endpointListPopup.add(copyItem)
+                        
+                    else:
+                        # Multiple items selected
+                        removeMultipleItem = JMenuItem("Remove Selected ({})".format(len(selected_indices)), 
+                                                     actionPerformed=lambda e: self.parent._removeMultipleEndpoints(None))
+                        removeMultipleItem.setToolTipText("Remove all selected endpoints")
+                        self._endpointListPopup.add(removeMultipleItem)
+                        
+                        # Copy all selected endpoints
+                        copyAllItem = JMenuItem("Copy All Selected", 
+                                              actionPerformed=lambda e: self._copyAllSelectedEndpoints(selected_indices))
+                        copyAllItem.setToolTipText("Copy all selected endpoint info to clipboard")
+                        self._endpointListPopup.add(copyAllItem)
+                    
+                    self._endpointListPopup.addSeparator()
+                
+                # General actions
+                if self.parent._endpointListModel.getSize() > 0:
+                    clearAllItem = JMenuItem("Clear All Endpoints", actionPerformed=lambda e: self.parent._clearAllEndpoints(None))
+                    clearAllItem.setToolTipText("Remove all endpoints from the list")
+                    self._endpointListPopup.add(clearAllItem)
+                
+                # Show the popup menu
+                if self._endpointListPopup.getComponentCount() > 0:
+                    self._endpointListPopup.show(self.parent._endpointList, event.getX(), event.getY())
+            
+            def _copyEndpointInfo(self, endpoint_text):
+                """Copy endpoint info to clipboard"""
+                try:
+                    from java.awt import Toolkit
+                    from java.awt.datatransfer import StringSelection, Clipboard
+                    
+                    toolkit = Toolkit.getDefaultToolkit()
+                    clipboard = toolkit.getSystemClipboard()
+                    selection = StringSelection(endpoint_text)
+                    clipboard.setContents(selection, selection)
+                    
+                    self.parent._callbacks.printOutput("Copied endpoint info: " + endpoint_text)
+                except Exception as e:
+                    self.parent._callbacks.printError("Error copying to clipboard: " + str(e))
+            
+            def _copyAllSelectedEndpoints(self, selected_indices):
+                """Copy all selected endpoint info to clipboard"""
+                try:
+                    from java.awt import Toolkit
+                    from java.awt.datatransfer import StringSelection, Clipboard
+                    
+                    endpoint_texts = []
+                    for index in selected_indices:
+                        if index < self.parent._endpointListModel.getSize():
+                            endpoint_text = self.parent._endpointListModel.getElementAt(index)
+                            endpoint_texts.append(endpoint_text)
+                    
+                    if endpoint_texts:
+                        clipboard_text = "\n".join(endpoint_texts)
+                        from java.awt import Toolkit
+                        from java.awt.datatransfer import StringSelection, Clipboard
+                        
+                        toolkit = Toolkit.getDefaultToolkit()
+                        clipboard = toolkit.getSystemClipboard()
+                        selection = StringSelection(clipboard_text)
+                        clipboard.setContents(selection, selection)
+                        
+                        self.parent._callbacks.printOutput("Copied {} endpoints to clipboard".format(len(endpoint_texts)))
+                except Exception as e:
+                    self.parent._callbacks.printError("Error copying to clipboard: " + str(e))
+        
+        return EndpointListMouseListener(self)
     
     def _createRequestPopupMenu(self):
         """Create popup menu for request editor"""
