@@ -3216,8 +3216,9 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener, IMessageEditorController,
                                 if "?" in path_part:
                                     path_part = path_part.split("?")[0]  # Remove query params
                                 
-                                # Combine with parent path if exists
-                                full_path = parent_path + path_part if parent_path else path_part
+                                # Use only the path from the URL, not combined with parent path
+                                # This prevents duplication of path segments
+                                full_path = path_part
                                 
                                 # Clean up path (remove double slashes, etc.)
                                 full_path = "/" + "/".join(filter(None, full_path.split("/")))
